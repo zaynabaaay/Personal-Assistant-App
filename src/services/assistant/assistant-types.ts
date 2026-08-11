@@ -11,6 +11,12 @@ export type AssistantRequest = {
   sessionId: string;
 };
 
+export type AssistantErrorCode =
+  | 'assistant_unavailable'
+  | 'invalid_request'
+  | 'rate_limited'
+  | 'request_too_large';
+
 export type AssistantResult =
   | {
       message: AssistantMessage;
@@ -19,7 +25,7 @@ export type AssistantResult =
     }
   | {
       error: {
-        code: 'provider_error';
+        code: AssistantErrorCode;
         message: string;
       };
       sessionId: string;

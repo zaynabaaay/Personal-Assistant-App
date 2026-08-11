@@ -1,6 +1,7 @@
 import { createAssistantContext } from './assistant-context';
-import { openAIProvider } from './openai-provider';
+import { AssistantApiClientError, assistantApiClient } from './assistant-api-client';
 import type {
+  AssistantErrorCode,
   AssistantMessage,
   AssistantProvider,
   AssistantRequest,
@@ -8,6 +9,7 @@ import type {
 } from './assistant-types';
 
 export type {
+  AssistantErrorCode,
   AssistantMessage,
   AssistantProvider,
   AssistantRequest,
@@ -22,9 +24,12 @@ function createSessionId() {
 
 export class AssistantService {
   private activeController: AbortController | null = null;
+  private readonly provider: AssistantProvider;
   private sessionId = createSessionId();
 
-  constructor(private readonly provider: AssistantProvider = openAIProvider) {}
+  constructor(provider: AssistantProvider = assistantApiClient) {
+    this.provider = provider;
+  }
 
   cancelRequest() {
     this.activeController?.abort();
@@ -68,8 +73,14 @@ export class AssistantService {
 
       return {
         error: {
-          code: 'provider_error',
-          message: error instanceof Error ? error.message : 'The assistant request failed.',
+          code:
+            error instanceof AssistantApiClientError
+              ? error.code
+              : ('assistant_unavailable' satisfies AssistantErrorCode),
+          message:
+            error instanceof AssistantApiClientError
+              ? error.message
+              : 'The assistant could not respond. Please try again.',
         },
         sessionId,
         status: 'error',

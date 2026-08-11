@@ -34,6 +34,22 @@ variable provides an override for other deployments. The public endpoint URL is
 safe to include in the client. Never prefix the OpenAI API key with `EXPO_PUBLIC_`
 or add it to GitHub Pages.
 
+### Backend safeguards
+
+The assistant function rejects request bodies larger than 48 KiB before parsing
+them. Valid conversations are limited to 50 messages, 4,000 characters per
+message, and 30,000 total message characters.
+
+Production also uses a Vercel WAF rule named `Assistant API rate limit`:
+
+- request path equals `/api/assistant`
+- method equals `POST`
+- fixed window of 30 requests per IP every 60 seconds
+- excess requests receive HTTP 429
+
+The WAF rule is configured in the Vercel dashboard and does not require an
+additional application environment variable.
+
 ## Deploy to GitHub Pages
 
 ```bash
