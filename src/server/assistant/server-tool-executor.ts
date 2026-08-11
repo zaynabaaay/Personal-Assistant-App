@@ -1,7 +1,7 @@
 import type {
   AssistantToolCall,
   AssistantToolOutput,
-} from '@/contracts/assistant';
+} from '../../contracts/assistant';
 
 export type AssistantServerToolExecutor = (
   call: AssistantToolCall,
@@ -12,4 +12,3 @@ export async function executeAssistantServerTool(
 ): Promise<AssistantToolOutput> {
   throw new Error(`No server executor is registered for assistant tool: ${call.name}`);
 }
-

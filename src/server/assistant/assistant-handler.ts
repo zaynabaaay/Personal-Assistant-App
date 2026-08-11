@@ -3,13 +3,13 @@ import {
   ASSISTANT_CLIENT_ID,
   isAssistantToolOutput,
   MAX_ASSISTANT_TOOL_STEPS,
-} from '@/contracts/assistant';
+} from '../../contracts/assistant';
 import type {
   AssistantErrorCode,
   AssistantToolCall,
   AssistantToolOutput,
   AssistantToolStep,
-} from '@/contracts/assistant';
+} from '../../contracts/assistant';
 import {
   OpenAIAssistantProviderError,
   requestOpenAIAssistant,

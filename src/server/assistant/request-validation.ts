@@ -1,11 +1,11 @@
 import {
   isCompleteAssistantToolStep,
   MAX_ASSISTANT_TOOL_STEPS,
-} from '@/contracts/assistant';
+} from '../../contracts/assistant';
 import type {
   AssistantApiRequest,
   AssistantMessage,
-} from '@/contracts/assistant';
+} from '../../contracts/assistant';
 
 const MAX_REQUEST_BODY_BYTES = 48 * 1024;
 const MAX_MESSAGE_COUNT = 50;
@@ -148,4 +148,3 @@ export async function parseAssistantJsonBody(
     return { status: 'invalid' };
   }
 }
-

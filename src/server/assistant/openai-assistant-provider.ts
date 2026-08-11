@@ -1,13 +1,13 @@
 import {
   ASSISTANT_TOOL_CONTRACTS,
   getAssistantToolContract,
-} from '@/contracts/assistant';
+} from '../../contracts/assistant';
 import type {
   AssistantApiRequest,
   AssistantRequest,
   AssistantToolCall,
   AssistantToolStep,
-} from '@/contracts/assistant';
+} from '../../contracts/assistant';
 
 type OpenAIResponse = {
   error?: {
