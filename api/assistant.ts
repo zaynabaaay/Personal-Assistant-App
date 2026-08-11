@@ -50,6 +50,18 @@ function jsonResponse(body: unknown, status: number, origin: string) {
   });
 }
 
+function normalizeOrigin(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value.trim()).origin;
+  } catch {
+    return null;
+  }
+}
+
 function isAssistantMessage(value: unknown): value is AssistantMessage {
   if (!value || typeof value !== 'object') {
     return false;
@@ -123,8 +135,8 @@ export async function handleAssistantRequest(
   request: Request,
   options: AssistantHandlerOptions = {},
 ) {
-  const allowedOrigin = options.allowedOrigin ?? process.env.ALLOWED_ORIGIN;
-  const requestOrigin = request.headers.get('Origin');
+  const allowedOrigin = normalizeOrigin(options.allowedOrigin ?? process.env.ALLOWED_ORIGIN);
+  const requestOrigin = normalizeOrigin(request.headers.get('Origin'));
 
   if (!allowedOrigin) {
     return new Response(JSON.stringify({ error: 'The assistant server is not configured.' }), {
