@@ -18,6 +18,11 @@ type Message = {
   text: string;
 };
 
+type WebViewport = {
+  height: number;
+  offsetTop: number;
+};
+
 const ASSISTANT_RESPONSE = 'Assistant response will appear here.';
 const INPUT_MIN_HEIGHT = 39;
 const INPUT_MAX_HEIGHT = 108;
@@ -37,6 +42,75 @@ function formatDate(value: Date) {
   }).format(value);
 }
 
+function useWebViewport() {
+  const [viewport, setViewport] = useState<WebViewport | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+
+    const visualViewport = window.visualViewport;
+    const root = document.documentElement;
+    const body = document.body;
+    const appRoot = document.getElementById('root');
+    const originalStyles = [root, body, appRoot].map((element) => ({
+      cssText: element?.style.cssText ?? '',
+      element,
+    }));
+
+    root.style.height = '100%';
+    root.style.overflow = 'hidden';
+    body.style.height = '100%';
+    body.style.inset = '0';
+    body.style.overflow = 'hidden';
+    body.style.overscrollBehavior = 'none';
+    body.style.position = 'fixed';
+    body.style.width = '100%';
+
+    if (appRoot) {
+      appRoot.style.height = '100%';
+      appRoot.style.overflow = 'hidden';
+      appRoot.style.width = '100%';
+    }
+
+    const updateViewport = () => {
+      const nextViewport = {
+        height: Math.round(visualViewport?.height ?? window.innerHeight),
+        offsetTop: Math.round(
+          visualViewport?.pageTop ?? visualViewport?.offsetTop ?? window.scrollY,
+        ),
+      };
+
+      setViewport((current) =>
+        current?.height === nextViewport.height && current.offsetTop === nextViewport.offsetTop
+          ? current
+          : nextViewport,
+      );
+    };
+
+    updateViewport();
+    window.addEventListener('resize', updateViewport);
+    window.addEventListener('orientationchange', updateViewport);
+    visualViewport?.addEventListener('resize', updateViewport);
+    visualViewport?.addEventListener('scroll', updateViewport);
+
+    return () => {
+      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('orientationchange', updateViewport);
+      visualViewport?.removeEventListener('resize', updateViewport);
+      visualViewport?.removeEventListener('scroll', updateViewport);
+      originalStyles.forEach(({ cssText, element }) => {
+        if (element) {
+          element.style.cssText = cssText;
+        }
+      });
+    };
+  }, []);
+
+  return viewport;
+}
+
 function MicrophoneIcon({ active }: { active: boolean }) {
   return (
     <View style={styles.micIcon}>
@@ -49,6 +123,7 @@ function MicrophoneIcon({ active }: { active: boolean }) {
 }
 
 export default function HomeScreen() {
+  const webViewport = useWebViewport();
   const [now, setNow] = useState(() => new Date());
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -97,12 +172,19 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView
+      style={[
+        styles.safeArea,
+        webViewport && styles.safeAreaWeb,
+        webViewport && { height: webViewport.height, top: webViewport.offsetTop },
+      ]}
+      testID="home-screen"
+    >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}
         style={styles.keyboardView}
       >
-        <View style={styles.header}>
+        <View style={styles.header} testID="home-header">
           <View>
             <Text style={styles.time}>{formatTime(now)}</Text>
             <Text style={styles.date}>{formatDate(now)}</Text>
@@ -129,6 +211,7 @@ export default function HomeScreen() {
           ref={conversationRef}
           showsVerticalScrollIndicator={false}
           style={styles.conversation}
+          testID="conversation-scroll"
         >
           {messages.map((message) => (
             <View
@@ -144,7 +227,7 @@ export default function HomeScreen() {
           ))}
         </ScrollView>
 
-        <View style={styles.composerShell}>
+        <View style={styles.composerShell} testID="composer-shell">
           {isListening ? <Text style={styles.listeningLabel}>Listening…</Text> : null}
 
           <View style={[styles.composer, isInputFocused && styles.composerFocused]}>
@@ -166,7 +249,11 @@ export default function HomeScreen() {
               placeholderTextColor="#8B8983"
               returnKeyType="default"
               scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
-              style={[styles.input, { height: inputHeight }]}
+              style={[
+                styles.input,
+                Platform.OS === 'web' && styles.inputWeb,
+                { height: inputHeight },
+              ]}
               value={draft}
             />
 
@@ -210,6 +297,12 @@ const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: '#F5F4F0',
     flex: 1,
+  },
+  safeAreaWeb: {
+    left: 0,
+    overflow: 'hidden',
+    position: 'absolute',
+    right: 0,
   },
   keyboardView: {
     flex: 1,
@@ -320,6 +413,9 @@ const styles = StyleSheet.create({
     paddingRight: 8,
     paddingTop: 8,
     textAlignVertical: 'top',
+  },
+  inputWeb: {
+    fontSize: 16,
   },
   iconButton: {
     alignItems: 'center',
