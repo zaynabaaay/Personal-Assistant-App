@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { assistantService } from '@/services/assistant/assistant-service';
+
 import { useVisibleViewport } from './use-visible-viewport';
 
 type Message = {
@@ -26,6 +28,7 @@ type HomeHeaderProps = {
 };
 
 type ConversationProps = {
+  isResponding: boolean;
   messages: Message[];
 };
 
@@ -43,7 +46,6 @@ type MessageComposerProps = {
   onToggleListening: () => void;
 };
 
-const ASSISTANT_RESPONSE = 'Assistant response will appear here.';
 const INPUT_MIN_HEIGHT = 39;
 const INPUT_MAX_HEIGHT = 108;
 const MICROPHONE_ACTIVE_COLOR = '#8B5E52';
@@ -113,7 +115,7 @@ function MessageItem({ message }: { message: Message }) {
   );
 }
 
-function Conversation({ messages }: ConversationProps) {
+function Conversation({ isResponding, messages }: ConversationProps) {
   const scrollViewRef = useRef<ScrollView>(null);
 
   return (
@@ -130,6 +132,14 @@ function Conversation({ messages }: ConversationProps) {
       {messages.map((message) => (
         <MessageItem key={message.id} message={message} />
       ))}
+
+      {isResponding ? (
+        <View style={styles.assistantMessage}>
+          <Text accessibilityLiveRegion="polite" style={styles.assistantMessageText}>
+            Responding…
+          </Text>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -223,9 +233,13 @@ export default function HomeScreen() {
   const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
   const [isFocused, setIsFocused] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isResponding, setIsResponding] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const nextMessageId = useRef(1);
-  const canSend = draft.trim().length > 0;
+  const activeRequestId = useRef(0);
+  const canSend = draft.trim().length > 0 && !isResponding;
+
+  useEffect(() => () => assistantService.cancelRequest(), []);
 
   const resetComposer = () => {
     setDraft('');
@@ -233,25 +247,54 @@ export default function HomeScreen() {
     setIsListening(false);
   };
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     const text = draft.trim();
 
-    if (!text) {
+    if (!text || isResponding) {
       return;
     }
 
-    setMessages((current) => [
-      ...current,
-      { id: nextMessageId.current++, role: 'user', text },
-      { id: nextMessageId.current++, role: 'assistant', text: ASSISTANT_RESPONSE },
-    ]);
+    const userMessage: Message = {
+      id: nextMessageId.current++,
+      role: 'user',
+      text,
+    };
+    const conversation = [...messages, userMessage];
+    const requestId = ++activeRequestId.current;
+
+    setMessages(conversation);
     resetComposer();
+    setIsResponding(true);
+
+    const result = await assistantService.respond(
+      conversation.map((message) => ({ content: message.text, role: message.role })),
+    );
+
+    if (activeRequestId.current !== requestId) {
+      return;
+    }
+
+    if (result.status === 'success') {
+      setMessages((current) => [
+        ...current,
+        {
+          id: nextMessageId.current++,
+          role: result.message.role,
+          text: result.message.content,
+        },
+      ]);
+    }
+
+    setIsResponding(false);
   };
 
   const clearConversation = () => {
+    activeRequestId.current += 1;
+    assistantService.resetSession();
     setMessages([]);
     resetComposer();
     setIsFocused(false);
+    setIsResponding(false);
     Keyboard.dismiss();
   };
 
@@ -271,7 +314,7 @@ export default function HomeScreen() {
     >
       <KeyboardAvoidingView behavior={KEYBOARD_AVOIDING_BEHAVIOR} style={styles.keyboardView}>
         <HomeHeader onClear={clearConversation} showClear={messages.length > 0} />
-        <Conversation messages={messages} />
+        <Conversation isResponding={isResponding} messages={messages} />
         <MessageComposer
           canSend={canSend}
           draft={draft}
