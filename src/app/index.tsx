@@ -315,6 +315,7 @@ const styles = StyleSheet.create({
     maxHeight: INPUT_MAX_HEIGHT,
     minHeight: INPUT_MIN_HEIGHT,
     outlineColor: 'transparent',
+    outlineStyle: 'solid',
     outlineWidth: 0,
     paddingRight: 8,
     paddingTop: 8,
