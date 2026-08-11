@@ -1,4 +1,11 @@
 import type { AssistantErrorCode, AssistantProvider } from './assistant-types';
+import type {
+  AssistantCalendarToolCall,
+  AssistantCalendarToolContinuation,
+} from './assistant-calendar-tools';
+import { ASSISTANT_CALENDAR_TOOL_NAMES } from './assistant-calendar-tools';
+import { executeAssistantCalendarTool } from './assistant-calendar-executor';
+import { ASSISTANT_CLIENT_HEADER, ASSISTANT_CLIENT_ID } from './assistant-transport';
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -7,6 +14,11 @@ declare const process: {
 type AssistantApiResponse = {
   code?: unknown;
   content?: unknown;
+  toolRequests?: unknown;
+};
+
+type AssistantApiRequest = Parameters<AssistantProvider>[0] & {
+  calendarToolContinuation?: AssistantCalendarToolContinuation;
 };
 
 const DEFAULT_ASSISTANT_API_URL =
@@ -50,10 +62,30 @@ export class AssistantApiClientError extends Error {
   }
 }
 
-export const assistantApiClient: AssistantProvider = async (request, signal) => {
-  const response = await fetch(ASSISTANT_API_URL, {
+function isCalendarToolCall(value: unknown): value is AssistantCalendarToolCall {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const call = value as Partial<AssistantCalendarToolCall>;
+  return (
+    typeof call.callId === 'string' &&
+    ASSISTANT_CALENDAR_TOOL_NAMES.some((name) => name === call.name) &&
+    !!call.arguments &&
+    typeof call.arguments === 'object' &&
+    typeof call.arguments.includeLocations === 'boolean'
+  );
+}
+
+async function postAssistantRequest(
+  request: AssistantApiRequest,
+  signal: AbortSignal,
+  fetchImplementation: typeof fetch,
+) {
+  const response = await fetchImplementation(ASSISTANT_API_URL, {
     body: JSON.stringify(request),
     headers: {
+      [ASSISTANT_CLIENT_HEADER]: ASSISTANT_CLIENT_ID,
       'Content-Type': 'application/json',
     },
     method: 'POST',
@@ -65,9 +97,50 @@ export const assistantApiClient: AssistantProvider = async (request, signal) => 
     throw new AssistantApiClientError(getErrorCode(response, body));
   }
 
-  if (typeof body.content !== 'string' || !body.content.trim()) {
-    throw new AssistantApiClientError('assistant_unavailable');
-  }
+  return body;
+}
 
-  return body.content.trim();
-};
+export function createAssistantApiClient(
+  fetchImplementation?: typeof fetch,
+  executeTool = executeAssistantCalendarTool,
+): AssistantProvider {
+  return async (request, signal) => {
+    const requestFetch = fetchImplementation ?? fetch;
+    const initialResponse = await postAssistantRequest(
+      request,
+      signal,
+      requestFetch,
+    );
+
+    if (typeof initialResponse.content === 'string' && initialResponse.content.trim()) {
+      return initialResponse.content.trim();
+    }
+
+    if (
+      !Array.isArray(initialResponse.toolRequests) ||
+      initialResponse.toolRequests.length < 1 ||
+      !initialResponse.toolRequests.every(isCalendarToolCall)
+    ) {
+      throw new AssistantApiClientError('assistant_unavailable');
+    }
+
+    const calls = initialResponse.toolRequests;
+    const outputs = await Promise.all(calls.map((call) => executeTool(call)));
+    const finalResponse = await postAssistantRequest(
+      {
+        ...request,
+        calendarToolContinuation: { calls, outputs },
+      },
+      signal,
+      requestFetch,
+    );
+
+    if (typeof finalResponse.content !== 'string' || !finalResponse.content.trim()) {
+      throw new AssistantApiClientError('assistant_unavailable');
+    }
+
+    return finalResponse.content.trim();
+  };
+}
+
+export const assistantApiClient = createAssistantApiClient();

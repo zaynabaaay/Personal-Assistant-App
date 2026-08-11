@@ -8,8 +8,14 @@ import {
 import {
   AssistantApiClientError,
   assistantApiClient,
+  createAssistantApiClient,
 } from '../src/services/assistant/assistant-api-client.ts';
+import { createAssistantCalendarToolExecutor } from '../src/services/assistant/assistant-calendar-executor.ts';
 import { AssistantService } from '../src/services/assistant/assistant-service.ts';
+import {
+  ASSISTANT_CLIENT_HEADER,
+  ASSISTANT_CLIENT_ID,
+} from '../src/services/assistant/assistant-transport.ts';
 
 const ALLOWED_ORIGIN = 'https://example.com';
 const BASE_REQUEST = {
@@ -49,6 +55,38 @@ function successfulOpenAIResponse(content = 'Hello!') {
   );
 }
 
+function calendarToolOpenAIResponse({
+  arguments: toolArguments = { includeLocations: false },
+  callId = 'calendar-call-1',
+  name = 'get_today_calendar_events',
+} = {}) {
+  return new Response(
+    JSON.stringify({
+      output: [
+        {
+          arguments: JSON.stringify(toolArguments),
+          call_id: callId,
+          name,
+          type: 'function_call',
+        },
+      ],
+    }),
+    { headers: { 'Content-Type': 'application/json', 'x-request-id': 'request-tool' } },
+  );
+}
+
+function nativeAssistantRequest(body, headers = {}) {
+  return new Request('https://assistant.example/api/assistant', {
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+    headers: {
+      [ASSISTANT_CLIENT_HEADER]: ASSISTANT_CLIENT_ID,
+      'Content-Type': 'application/json',
+      ...headers,
+    },
+    method: 'POST',
+  });
+}
+
 test('normal chat reaches OpenAI with the existing conversation and safe settings', async () => {
   let openAIRequest;
   const response = await handleAssistantRequest(assistantRequest(BASE_REQUEST), {
@@ -65,6 +103,372 @@ test('normal chat reaches OpenAI with the existing conversation and safe setting
   assert.deepEqual(openAIRequest.input, BASE_REQUEST.messages);
   assert.equal(openAIRequest.store, false);
   assert.match(openAIRequest.instructions, /America\/Toronto/);
+  assert.equal(openAIRequest.tool_choice, 'auto');
+  assert.deepEqual(
+    openAIRequest.tools.map((tool) => tool.name),
+    [
+      'get_today_calendar_events',
+      'get_tomorrow_calendar_events',
+      'get_next_calendar_event',
+      'get_calendar_events_in_range',
+    ],
+  );
+});
+
+test('the backend returns a validated calendar tool request without querying a calendar', async () => {
+  const response = await handleAssistantRequest(assistantRequest(BASE_REQUEST), {
+    allowedOrigin: ALLOWED_ORIGIN,
+    apiKey: 'test-key',
+    fetchImplementation: async () => calendarToolOpenAIResponse(),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    toolRequests: [
+      {
+        arguments: { includeLocations: false },
+        callId: 'calendar-call-1',
+        name: 'get_today_calendar_events',
+      },
+    ],
+  });
+});
+
+test('calendar tool results are supplied to OpenAI without persistence', async () => {
+  const requestBody = {
+    ...BASE_REQUEST,
+    calendarToolContinuation: {
+      calls: [
+        {
+          arguments: { includeLocations: false },
+          callId: 'calendar-call-1',
+          name: 'get_today_calendar_events',
+        },
+      ],
+      outputs: [
+        {
+          callId: 'calendar-call-1',
+          result: {
+            events: [
+              {
+                endTime: '2026-08-11T22:00:00.000Z',
+                isAllDay: false,
+                startTime: '2026-08-11T21:00:00.000Z',
+                title: 'Test Personal Assistant',
+              },
+            ],
+            status: 'success',
+          },
+        },
+      ],
+    },
+  };
+  let openAIRequest;
+  const response = await handleAssistantRequest(assistantRequest(requestBody), {
+    allowedOrigin: ALLOWED_ORIGIN,
+    apiKey: 'test-key',
+    fetchImplementation: async (_url, init) => {
+      openAIRequest = JSON.parse(String(init?.body));
+      return successfulOpenAIResponse('You have one event at 5 PM.');
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(openAIRequest.store, false);
+  assert.equal(openAIRequest.tool_choice, 'none');
+  assert.deepEqual(openAIRequest.input.slice(-2), [
+    {
+      arguments: JSON.stringify({ includeLocations: false }),
+      call_id: 'calendar-call-1',
+      name: 'get_today_calendar_events',
+      type: 'function_call',
+    },
+    {
+      call_id: 'calendar-call-1',
+      output: JSON.stringify(requestBody.calendarToolContinuation.outputs[0].result),
+      type: 'function_call_output',
+    },
+  ]);
+  assert.doesNotMatch(
+    openAIRequest.input.at(-1).output,
+    /calendarName|description|notes|event-id/,
+  );
+});
+
+test('calendar metadata outside the allowed minimum fields is rejected', async () => {
+  const requestBody = {
+    ...BASE_REQUEST,
+    calendarToolContinuation: {
+      calls: [
+        {
+          arguments: { includeLocations: false },
+          callId: 'calendar-call-1',
+          name: 'get_today_calendar_events',
+        },
+      ],
+      outputs: [
+        {
+          callId: 'calendar-call-1',
+          result: {
+            events: [
+              {
+                endTime: '2026-08-11T22:00:00.000Z',
+                id: 'private-event-id',
+                isAllDay: false,
+                startTime: '2026-08-11T21:00:00.000Z',
+                title: 'Test event',
+              },
+            ],
+            status: 'success',
+          },
+        },
+      ],
+    },
+  };
+  const response = await handleAssistantRequest(assistantRequest(requestBody), {
+    allowedOrigin: ALLOWED_ORIGIN,
+    apiKey: 'test-key',
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, 'invalid_request');
+});
+
+test('the app client queries calendar only after the backend requests a tool', async () => {
+  const postedBodies = [];
+  let toolExecutions = 0;
+  const responses = [
+    {
+      toolRequests: [
+        {
+          arguments: { includeLocations: false },
+          callId: 'calendar-call-1',
+          name: 'get_today_calendar_events',
+        },
+      ],
+    },
+    { content: 'You have one event at 5 PM.' },
+  ];
+  const client = createAssistantApiClient(
+    async (_url, init) => {
+      postedBodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify(responses.shift()), { status: 200 });
+    },
+    async (call) => {
+      toolExecutions += 1;
+      return {
+        callId: call.callId,
+        result: {
+          events: [
+            {
+              endTime: '2026-08-11T22:00:00.000Z',
+              isAllDay: false,
+              startTime: '2026-08-11T21:00:00.000Z',
+              title: 'Test Personal Assistant',
+            },
+          ],
+          status: 'success',
+        },
+      };
+    },
+  );
+
+  const content = await client(BASE_REQUEST, new AbortController().signal);
+
+  assert.equal(content, 'You have one event at 5 PM.');
+  assert.equal(toolExecutions, 1);
+  assert.equal(postedBodies.length, 2);
+  assert.equal(postedBodies[0].calendarToolContinuation, undefined);
+  assert.equal(postedBodies[1].calendarToolContinuation.outputs[0].result.events[0].id, undefined);
+});
+
+test('an unrelated response does not query the device calendar', async () => {
+  let toolExecutions = 0;
+  const client = createAssistantApiClient(
+    async () => new Response(JSON.stringify({ content: 'Hello!' }), { status: 200 }),
+    async () => {
+      toolExecutions += 1;
+      throw new Error('Calendar should not be queried.');
+    },
+  );
+
+  assert.equal(
+    await client(BASE_REQUEST, new AbortController().signal),
+    'Hello!',
+  );
+  assert.equal(toolExecutions, 0);
+});
+
+test('the web calendar state is returned as a safe native-app explanation input', async () => {
+  const unavailableCalendar = {
+    findNextUpcomingEvent: async () => ({ message: 'raw message', status: 'unavailable' }),
+    getPermissionStatus: async () => ({ message: 'raw message', status: 'unavailable' }),
+    readEventsInRange: async () => ({ message: 'raw message', status: 'unavailable' }),
+    readTodayEvents: async () => ({ message: 'raw message', status: 'unavailable' }),
+    readTomorrowEvents: async () => ({ message: 'raw message', status: 'unavailable' }),
+    requestPermission: async () => ({ message: 'raw message', status: 'unavailable' }),
+  };
+  const executeTool = createAssistantCalendarToolExecutor(unavailableCalendar);
+  const output = await executeTool({
+    arguments: { includeLocations: false },
+    callId: 'calendar-call-1',
+    name: 'get_today_calendar_events',
+  });
+
+  assert.deepEqual(output, {
+    callId: 'calendar-call-1',
+    result: {
+      message: 'Device calendar access is available only in the native app.',
+      status: 'unavailable',
+    },
+  });
+});
+
+test('calendar events are sanitized before leaving the device', async () => {
+  const event = {
+    calendarName: 'Private calendar',
+    description: 'private description',
+    endDate: '2026-08-11T22:00:00.000Z',
+    id: 'private-event-id',
+    isAllDay: false,
+    location: 'Home',
+    notes: 'private notes',
+    startDate: '2026-08-11T21:00:00.000Z',
+    timeZone: 'America/Toronto',
+    title: 'Test Personal Assistant',
+  };
+  const service = {
+    findNextUpcomingEvent: async () => ({ data: event, status: 'success' }),
+    getPermissionStatus: async () => ({ status: 'granted' }),
+    readEventsInRange: async () => ({ data: [event], status: 'success' }),
+    readTodayEvents: async () => ({ data: [event], status: 'success' }),
+    readTomorrowEvents: async () => ({ data: [event], status: 'success' }),
+    requestPermission: async () => ({ status: 'granted' }),
+  };
+  const executeTool = createAssistantCalendarToolExecutor(service);
+
+  const withoutLocation = await executeTool({
+    arguments: { includeLocations: false },
+    callId: 'calendar-call-1',
+    name: 'get_today_calendar_events',
+  });
+  const withLocation = await executeTool({
+    arguments: { includeLocations: true },
+    callId: 'calendar-call-2',
+    name: 'get_today_calendar_events',
+  });
+
+  assert.deepEqual(withoutLocation.result.events[0], {
+    endTime: event.endDate,
+    isAllDay: false,
+    startTime: event.startDate,
+    title: event.title,
+  });
+  assert.deepEqual(withLocation.result.events[0], {
+    endTime: event.endDate,
+    isAllDay: false,
+    location: 'Home',
+    startTime: event.startDate,
+    title: event.title,
+  });
+  assert.doesNotMatch(
+    JSON.stringify([withoutLocation, withLocation]),
+    /private-event-id|private description|private notes|Private calendar|timeZone/,
+  );
+});
+
+test('all four read-only calendar tools delegate to the calendar service', async () => {
+  const calls = [];
+  const success = { data: [], status: 'success' };
+  const service = {
+    findNextUpcomingEvent: async () => {
+      calls.push('next');
+      return { data: null, status: 'success' };
+    },
+    getPermissionStatus: async () => ({ status: 'granted' }),
+    readEventsInRange: async (startDate, endDate) => {
+      calls.push(['range', startDate.toISOString(), endDate.toISOString()]);
+      return success;
+    },
+    readTodayEvents: async () => {
+      calls.push('today');
+      return success;
+    },
+    readTomorrowEvents: async () => {
+      calls.push('tomorrow');
+      return success;
+    },
+    requestPermission: async () => ({ status: 'granted' }),
+  };
+  const executeTool = createAssistantCalendarToolExecutor(service);
+
+  await executeTool({
+    arguments: { includeLocations: false },
+    callId: 'today',
+    name: 'get_today_calendar_events',
+  });
+  await executeTool({
+    arguments: { includeLocations: false },
+    callId: 'tomorrow',
+    name: 'get_tomorrow_calendar_events',
+  });
+  await executeTool({
+    arguments: { includeLocations: false },
+    callId: 'next',
+    name: 'get_next_calendar_event',
+  });
+  await executeTool({
+    arguments: {
+      endDateTime: '2026-08-12T00:00:00.000Z',
+      includeLocations: false,
+      startDateTime: '2026-08-11T00:00:00.000Z',
+    },
+    callId: 'range',
+    name: 'get_calendar_events_in_range',
+  });
+
+  assert.deepEqual(calls, [
+    'today',
+    'tomorrow',
+    'next',
+    ['range', '2026-08-11T00:00:00.000Z', '2026-08-12T00:00:00.000Z'],
+  ]);
+});
+
+test('the native app can call the backend without a browser Origin header', async () => {
+  const response = await handleAssistantRequest(nativeAssistantRequest(BASE_REQUEST), {
+    allowedOrigin: ALLOWED_ORIGIN,
+    apiKey: 'test-key',
+    fetchImplementation: async () => successfulOpenAIResponse('Native reply'),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { content: 'Native reply' });
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), null);
+});
+
+test('originless requests without the app client marker remain rejected', async () => {
+  const response = await handleAssistantRequest(
+    new Request('https://assistant.example/api/assistant', {
+      body: JSON.stringify(BASE_REQUEST),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    }),
+    { allowedOrigin: ALLOWED_ORIGIN, apiKey: 'test-key' },
+  );
+
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, 'invalid_request');
+});
+
+test('a wrong browser Origin cannot bypass the check with the app client marker', async () => {
+  const response = await handleAssistantRequest(
+    nativeAssistantRequest(BASE_REQUEST, { Origin: 'https://wrong.example' }),
+    { allowedOrigin: ALLOWED_ORIGIN, apiKey: 'test-key' },
+  );
+
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, 'invalid_request');
 });
 
 test('declared oversized bodies are rejected before the provider is called', async () => {

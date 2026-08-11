@@ -9,6 +9,7 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "com.zaynabaaay.personalassistant",
       "supportsTablet": true
     },
     "android": {
@@ -17,6 +18,9 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "blockedPermissions": [
+        "android.permission.WRITE_CALENDAR"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -32,6 +36,14 @@
           "backgroundColor": "#F5F4F0",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 88
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Allow Personal Assistant to read your calendar events.",
+          "remindersPermission": false,
+          "writeOnlyAccess": false
         }
       ]
     ],
