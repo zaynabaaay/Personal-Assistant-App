@@ -29,7 +29,7 @@ type AssistantHandlerOptions = {
   model?: string;
 };
 
-const DEFAULT_MODEL = 'gpt-5.6-sol';
+const DEFAULT_MODEL = 'gpt-5.4-mini';
 const MAX_MESSAGE_COUNT = 50;
 const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_TOTAL_MESSAGE_LENGTH = 30_000;
@@ -204,7 +204,7 @@ export async function handleAssistantRequest(
         })),
         instructions: createInstructions(body),
         max_output_tokens: 600,
-        model: options.model ?? process.env.OPENAI_MODEL ?? DEFAULT_MODEL,
+        model: options.model ?? DEFAULT_MODEL,
         reasoning: { effort: 'none' },
         store: false,
         text: { verbosity: 'low' },

@@ -21,7 +21,6 @@ Configure these Vercel environment variables:
 
 - `OPENAI_API_KEY`: the project-scoped OpenAI API key
 - `ALLOWED_ORIGIN`: `https://zaynabaaay.github.io`
-- `OPENAI_MODEL`: optional; defaults to `gpt-5.6-sol`
 
 Build the GitHub Pages client with the public function endpoint:
 
