@@ -1,9 +1,6 @@
-export type AssistantContext = {
-  currentLocalDate: string;
-  currentLocalTime: string;
-  dayOfWeek: string;
-  timezone: string;
-};
+import type { AssistantContext } from '@/contracts/assistant';
+
+export type { AssistantContext } from '@/contracts/assistant';
 
 const LOCAL_DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   day: 'numeric',

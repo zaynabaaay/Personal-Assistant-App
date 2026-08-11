@@ -1,25 +1,32 @@
-import type { AssistantErrorCode, AssistantProvider } from './assistant-types';
+import {
+  ASSISTANT_CLIENT_HEADER,
+  ASSISTANT_CLIENT_ID,
+  isCompleteAssistantToolStep,
+  isPendingAssistantToolStep,
+  MAX_ASSISTANT_TOOL_STEPS,
+} from '@/contracts/assistant';
 import type {
-  AssistantCalendarToolCall,
-  AssistantCalendarToolContinuation,
-} from './assistant-calendar-tools';
-import { ASSISTANT_CALENDAR_TOOL_NAMES } from './assistant-calendar-tools';
-import { executeAssistantCalendarTool } from './assistant-calendar-executor';
-import { ASSISTANT_CLIENT_HEADER, ASSISTANT_CLIENT_ID } from './assistant-transport';
+  AssistantApiRequest,
+  AssistantErrorCode,
+  AssistantToolCall,
+  AssistantToolOutput,
+  AssistantToolStep,
+} from '@/contracts/assistant';
+
+import { executeAssistantClientTool } from './assistant-client-tool-executor';
+import type { AssistantProvider } from './assistant-types';
 
 declare const process: {
   env: Record<string, string | undefined>;
 };
 
-type AssistantApiResponse = {
+type AssistantApiErrorBody = {
   code?: unknown;
-  content?: unknown;
-  toolRequests?: unknown;
 };
 
-type AssistantApiRequest = Parameters<AssistantProvider>[0] & {
-  calendarToolContinuation?: AssistantCalendarToolContinuation;
-};
+type AssistantClientToolExecutor = (
+  call: AssistantToolCall,
+) => Promise<AssistantToolOutput>;
 
 const DEFAULT_ASSISTANT_API_URL =
   'https://personal-assistant-app-ten.vercel.app/api/assistant';
@@ -36,7 +43,7 @@ function isAssistantErrorCode(value: unknown): value is AssistantErrorCode {
   return typeof value === 'string' && Object.hasOwn(ERROR_MESSAGES, value);
 }
 
-function getErrorCode(response: Response, body: AssistantApiResponse): AssistantErrorCode {
+function getErrorCode(response: Response, body: AssistantApiErrorBody): AssistantErrorCode {
   if (response.status === 429) {
     return 'rate_limited';
   }
@@ -62,21 +69,6 @@ export class AssistantApiClientError extends Error {
   }
 }
 
-function isCalendarToolCall(value: unknown): value is AssistantCalendarToolCall {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const call = value as Partial<AssistantCalendarToolCall>;
-  return (
-    typeof call.callId === 'string' &&
-    ASSISTANT_CALENDAR_TOOL_NAMES.some((name) => name === call.name) &&
-    !!call.arguments &&
-    typeof call.arguments === 'object' &&
-    typeof call.arguments.includeLocations === 'boolean'
-  );
-}
-
 async function postAssistantRequest(
   request: AssistantApiRequest,
   signal: AbortSignal,
@@ -91,55 +83,127 @@ async function postAssistantRequest(
     method: 'POST',
     signal,
   });
-  const body = (await response.json().catch(() => ({}))) as AssistantApiResponse;
+  const body = (await response.json().catch(() => ({}))) as unknown;
 
   if (!response.ok) {
-    throw new AssistantApiClientError(getErrorCode(response, body));
+    throw new AssistantApiClientError(
+      getErrorCode(response, body as AssistantApiErrorBody),
+    );
   }
 
   return body;
 }
 
+function getCompletedContent(body: unknown) {
+  if (!body || typeof body !== 'object') {
+    return null;
+  }
+
+  const response = body as { content?: unknown; status?: unknown };
+  return response.status === 'completed' &&
+    typeof response.content === 'string' &&
+    response.content.trim()
+    ? response.content.trim()
+    : null;
+}
+
+function getClientToolRequest(body: unknown) {
+  if (!body || typeof body !== 'object') {
+    return null;
+  }
+
+  const response = body as {
+    completedToolSteps?: unknown;
+    pendingToolStep?: unknown;
+    status?: unknown;
+  };
+
+  if (
+    response.status !== 'requires_client_tools' ||
+    !Array.isArray(response.completedToolSteps) ||
+    !response.completedToolSteps.every(isCompleteAssistantToolStep) ||
+    !isPendingAssistantToolStep(response.pendingToolStep)
+  ) {
+    return null;
+  }
+
+  return {
+    completedToolSteps: response.completedToolSteps,
+    pendingToolStep: response.pendingToolStep,
+  };
+}
+
+async function completeClientToolStep(
+  pendingStep: AssistantToolStep,
+  executeTool: AssistantClientToolExecutor,
+) {
+  const completedCallIds = new Set(
+    pendingStep.outputs.map((output) => output.callId),
+  );
+  const clientCalls = pendingStep.calls.filter(
+    (call) => call.execution === 'client' && !completedCallIds.has(call.callId),
+  );
+
+  if (clientCalls.length < 1) {
+    throw new AssistantApiClientError('assistant_unavailable');
+  }
+
+  const clientOutputs = await Promise.all(clientCalls.map(executeTool));
+  const completedStep: AssistantToolStep = {
+    calls: pendingStep.calls,
+    outputs: [...pendingStep.outputs, ...clientOutputs],
+  };
+
+  if (!isCompleteAssistantToolStep(completedStep)) {
+    throw new AssistantApiClientError('assistant_unavailable');
+  }
+
+  return completedStep;
+}
+
 export function createAssistantApiClient(
   fetchImplementation?: typeof fetch,
-  executeTool = executeAssistantCalendarTool,
+  executeTool: AssistantClientToolExecutor = executeAssistantClientTool,
 ): AssistantProvider {
   return async (request, signal) => {
     const requestFetch = fetchImplementation ?? fetch;
-    const initialResponse = await postAssistantRequest(
-      request,
-      signal,
-      requestFetch,
-    );
+    const completedSteps: AssistantToolStep[] = [];
 
-    if (typeof initialResponse.content === 'string' && initialResponse.content.trim()) {
-      return initialResponse.content.trim();
+    while (true) {
+      const body = await postAssistantRequest(
+        {
+          ...request,
+          ...(completedSteps.length > 0
+            ? { toolContinuation: { steps: completedSteps } }
+            : {}),
+        },
+        signal,
+        requestFetch,
+      );
+      const content = getCompletedContent(body);
+
+      if (content) {
+        return content;
+      }
+
+      const toolRequest = getClientToolRequest(body);
+
+      if (!toolRequest) {
+        throw new AssistantApiClientError('assistant_unavailable');
+      }
+
+      const nextStepCount =
+        completedSteps.length + toolRequest.completedToolSteps.length + 1;
+
+      if (nextStepCount > MAX_ASSISTANT_TOOL_STEPS) {
+        throw new AssistantApiClientError('assistant_unavailable');
+      }
+
+      completedSteps.push(...toolRequest.completedToolSteps);
+      completedSteps.push(
+        await completeClientToolStep(toolRequest.pendingToolStep, executeTool),
+      );
     }
-
-    if (
-      !Array.isArray(initialResponse.toolRequests) ||
-      initialResponse.toolRequests.length < 1 ||
-      !initialResponse.toolRequests.every(isCalendarToolCall)
-    ) {
-      throw new AssistantApiClientError('assistant_unavailable');
-    }
-
-    const calls = initialResponse.toolRequests;
-    const outputs = await Promise.all(calls.map((call) => executeTool(call)));
-    const finalResponse = await postAssistantRequest(
-      {
-        ...request,
-        calendarToolContinuation: { calls, outputs },
-      },
-      signal,
-      requestFetch,
-    );
-
-    if (typeof finalResponse.content !== 'string' || !finalResponse.content.trim()) {
-      throw new AssistantApiClientError('assistant_unavailable');
-    }
-
-    return finalResponse.content.trim();
   };
 }
 

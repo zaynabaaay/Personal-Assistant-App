@@ -1,21 +1,14 @@
-import type { AssistantContext } from './assistant-context';
+import type {
+  AssistantErrorCode,
+  AssistantMessage,
+  AssistantRequest,
+} from '@/contracts/assistant';
 
-export type AssistantMessage = {
-  content: string;
-  role: 'user' | 'assistant';
-};
-
-export type AssistantRequest = {
-  context: AssistantContext;
-  messages: readonly AssistantMessage[];
-  sessionId: string;
-};
-
-export type AssistantErrorCode =
-  | 'assistant_unavailable'
-  | 'invalid_request'
-  | 'rate_limited'
-  | 'request_too_large';
+export type {
+  AssistantErrorCode,
+  AssistantMessage,
+  AssistantRequest,
+} from '@/contracts/assistant';
 
 export type AssistantResult =
   | {

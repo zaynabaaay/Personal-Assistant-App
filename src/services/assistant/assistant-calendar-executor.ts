@@ -5,7 +5,7 @@ import type {
   AssistantCalendarToolCall,
   AssistantCalendarToolOutput,
   AssistantCalendarToolResult,
-} from './assistant-calendar-tools';
+} from '@/contracts/assistant';
 
 const MAX_CALENDAR_EVENTS = 50;
 const MAX_RANGE_DAYS = 366;
@@ -98,7 +98,12 @@ export function createAssistantCalendarToolExecutor(service: typeof calendarServ
           rangeLength <= 0 ||
           rangeLength > MAX_RANGE_DAYS * 24 * 60 * 60 * 1_000
         ) {
-          return { callId: call.callId, result: invalidRangeResult() };
+          return {
+            callId: call.callId,
+            execution: call.execution,
+            name: call.name,
+            result: invalidRangeResult(),
+          };
         }
 
         result = await service.readEventsInRange(startDate, endDate);
@@ -108,6 +113,8 @@ export function createAssistantCalendarToolExecutor(service: typeof calendarServ
 
     return {
       callId: call.callId,
+      execution: call.execution,
+      name: call.name,
       result: sanitizeResult(result, includeLocations),
     };
   };

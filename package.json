@@ -14,6 +14,7 @@
     "deploy": "gh-pages --nojekyll -d dist",
     "test:assistant": "tsx --test tests/assistant-backend.test.mjs",
     "test:calendar": "tsx --test tests/calendar-service.test.mjs",
+    "test:projects": "tsx --test tests/project-domain.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint"
   },

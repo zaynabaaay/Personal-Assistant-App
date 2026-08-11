@@ -5,6 +5,7 @@ import {
   ASSISTANT_REQUEST_LIMITS,
   handleAssistantRequest,
 } from '../api/assistant.ts';
+import { MAX_ASSISTANT_TOOL_STEPS } from '../src/contracts/assistant/tool-contract.ts';
 import {
   AssistantApiClientError,
   assistantApiClient,
@@ -15,7 +16,7 @@ import { AssistantService } from '../src/services/assistant/assistant-service.ts
 import {
   ASSISTANT_CLIENT_HEADER,
   ASSISTANT_CLIENT_ID,
-} from '../src/services/assistant/assistant-transport.ts';
+} from '../src/contracts/assistant/assistant-contract.ts';
 
 const ALLOWED_ORIGIN = 'https://example.com';
 const BASE_REQUEST = {
@@ -75,6 +76,35 @@ function calendarToolOpenAIResponse({
   );
 }
 
+function calendarToolCall(index, name = 'get_today_calendar_events') {
+  return {
+    arguments: { includeLocations: false },
+    callId: `calendar-call-${index}`,
+    execution: 'client',
+    name,
+  };
+}
+
+function calendarToolOutput(call) {
+  return {
+    callId: call.callId,
+    execution: call.execution,
+    name: call.name,
+    result: { events: [], status: 'success' },
+  };
+}
+
+function pendingCalendarResponse(index, name) {
+  return {
+    completedToolSteps: [],
+    pendingToolStep: {
+      calls: [calendarToolCall(index, name)],
+      outputs: [],
+    },
+    status: 'requires_client_tools',
+  };
+}
+
 function nativeAssistantRequest(body, headers = {}) {
   return new Request('https://assistant.example/api/assistant', {
     body: typeof body === 'string' ? body : JSON.stringify(body),
@@ -99,7 +129,10 @@ test('normal chat reaches OpenAI with the existing conversation and safe setting
   });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { content: 'Assistant reply' });
+  assert.deepEqual(await response.json(), {
+    content: 'Assistant reply',
+    status: 'completed',
+  });
   assert.deepEqual(openAIRequest.input, BASE_REQUEST.messages);
   assert.equal(openAIRequest.store, false);
   assert.match(openAIRequest.instructions, /America\/Toronto/);
@@ -124,43 +157,52 @@ test('the backend returns a validated calendar tool request without querying a c
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    toolRequests: [
-      {
+    completedToolSteps: [],
+    pendingToolStep: {
+      calls: [{
         arguments: { includeLocations: false },
         callId: 'calendar-call-1',
+        execution: 'client',
         name: 'get_today_calendar_events',
-      },
-    ],
+      }],
+      outputs: [],
+    },
+    status: 'requires_client_tools',
   });
 });
 
 test('calendar tool results are supplied to OpenAI without persistence', async () => {
   const requestBody = {
     ...BASE_REQUEST,
-    calendarToolContinuation: {
-      calls: [
-        {
-          arguments: { includeLocations: false },
-          callId: 'calendar-call-1',
-          name: 'get_today_calendar_events',
-        },
-      ],
-      outputs: [
-        {
-          callId: 'calendar-call-1',
-          result: {
-            events: [
-              {
-                endTime: '2026-08-11T22:00:00.000Z',
-                isAllDay: false,
-                startTime: '2026-08-11T21:00:00.000Z',
-                title: 'Test Personal Assistant',
-              },
-            ],
-            status: 'success',
+    toolContinuation: {
+      steps: [{
+        calls: [
+          {
+            arguments: { includeLocations: false },
+            callId: 'calendar-call-1',
+            execution: 'client',
+            name: 'get_today_calendar_events',
           },
-        },
-      ],
+        ],
+        outputs: [
+          {
+            callId: 'calendar-call-1',
+            execution: 'client',
+            name: 'get_today_calendar_events',
+            result: {
+              events: [
+                {
+                  endTime: '2026-08-11T22:00:00.000Z',
+                  isAllDay: false,
+                  startTime: '2026-08-11T21:00:00.000Z',
+                  title: 'Test Personal Assistant',
+                },
+              ],
+              status: 'success',
+            },
+          },
+        ],
+      }],
     },
   };
   let openAIRequest;
@@ -175,7 +217,7 @@ test('calendar tool results are supplied to OpenAI without persistence', async (
 
   assert.equal(response.status, 200);
   assert.equal(openAIRequest.store, false);
-  assert.equal(openAIRequest.tool_choice, 'none');
+  assert.equal(openAIRequest.tool_choice, 'auto');
   assert.deepEqual(openAIRequest.input.slice(-2), [
     {
       arguments: JSON.stringify({ includeLocations: false }),
@@ -185,7 +227,7 @@ test('calendar tool results are supplied to OpenAI without persistence', async (
     },
     {
       call_id: 'calendar-call-1',
-      output: JSON.stringify(requestBody.calendarToolContinuation.outputs[0].result),
+      output: JSON.stringify(requestBody.toolContinuation.steps[0].outputs[0].result),
       type: 'function_call_output',
     },
   ]);
@@ -198,31 +240,36 @@ test('calendar tool results are supplied to OpenAI without persistence', async (
 test('calendar metadata outside the allowed minimum fields is rejected', async () => {
   const requestBody = {
     ...BASE_REQUEST,
-    calendarToolContinuation: {
-      calls: [
-        {
-          arguments: { includeLocations: false },
-          callId: 'calendar-call-1',
-          name: 'get_today_calendar_events',
-        },
-      ],
-      outputs: [
-        {
-          callId: 'calendar-call-1',
-          result: {
-            events: [
-              {
-                endTime: '2026-08-11T22:00:00.000Z',
-                id: 'private-event-id',
-                isAllDay: false,
-                startTime: '2026-08-11T21:00:00.000Z',
-                title: 'Test event',
-              },
-            ],
-            status: 'success',
+    toolContinuation: {
+      steps: [{
+        calls: [
+          {
+            arguments: { includeLocations: false },
+            callId: 'calendar-call-1',
+            execution: 'client',
+            name: 'get_today_calendar_events',
           },
-        },
-      ],
+        ],
+        outputs: [
+          {
+            callId: 'calendar-call-1',
+            execution: 'client',
+            name: 'get_today_calendar_events',
+            result: {
+              events: [
+                {
+                  endTime: '2026-08-11T22:00:00.000Z',
+                  id: 'private-event-id',
+                  isAllDay: false,
+                  startTime: '2026-08-11T21:00:00.000Z',
+                  title: 'Test event',
+                },
+              ],
+              status: 'success',
+            },
+          },
+        ],
+      }],
     },
   };
   const response = await handleAssistantRequest(assistantRequest(requestBody), {
@@ -239,15 +286,19 @@ test('the app client queries calendar only after the backend requests a tool', a
   let toolExecutions = 0;
   const responses = [
     {
-      toolRequests: [
-        {
+      completedToolSteps: [],
+      pendingToolStep: {
+        calls: [{
           arguments: { includeLocations: false },
           callId: 'calendar-call-1',
+          execution: 'client',
           name: 'get_today_calendar_events',
-        },
-      ],
+        }],
+        outputs: [],
+      },
+      status: 'requires_client_tools',
     },
-    { content: 'You have one event at 5 PM.' },
+    { content: 'You have one event at 5 PM.', status: 'completed' },
   ];
   const client = createAssistantApiClient(
     async (_url, init) => {
@@ -258,6 +309,8 @@ test('the app client queries calendar only after the backend requests a tool', a
       toolExecutions += 1;
       return {
         callId: call.callId,
+        execution: call.execution,
+        name: call.name,
         result: {
           events: [
             {
@@ -278,14 +331,114 @@ test('the app client queries calendar only after the backend requests a tool', a
   assert.equal(content, 'You have one event at 5 PM.');
   assert.equal(toolExecutions, 1);
   assert.equal(postedBodies.length, 2);
-  assert.equal(postedBodies[0].calendarToolContinuation, undefined);
-  assert.equal(postedBodies[1].calendarToolContinuation.outputs[0].result.events[0].id, undefined);
+  assert.equal(postedBodies[0].toolContinuation, undefined);
+  assert.equal(
+    postedBodies[1].toolContinuation.steps[0].outputs[0].result.events[0].id,
+    undefined,
+  );
+});
+
+test('the generic client loop handles multiple sequential tool calls', async () => {
+  const postedBodies = [];
+  const executedTools = [];
+  const responses = [
+    pendingCalendarResponse(1, 'get_today_calendar_events'),
+    pendingCalendarResponse(2, 'get_next_calendar_event'),
+    { content: 'You have one event today, and it is also your next event.', status: 'completed' },
+  ];
+  const client = createAssistantApiClient(
+    async (_url, init) => {
+      postedBodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify(responses.shift()), { status: 200 });
+    },
+    async (call) => {
+      executedTools.push(call.name);
+      return calendarToolOutput(call);
+    },
+  );
+
+  const content = await client(BASE_REQUEST, new AbortController().signal);
+
+  assert.equal(
+    content,
+    'You have one event today, and it is also your next event.',
+  );
+  assert.deepEqual(executedTools, [
+    'get_today_calendar_events',
+    'get_next_calendar_event',
+  ]);
+  assert.equal(postedBodies[0].toolContinuation, undefined);
+  assert.equal(postedBodies[1].toolContinuation.steps.length, 1);
+  assert.equal(postedBodies[2].toolContinuation.steps.length, 2);
+});
+
+test('the generic client tool loop stops at the configured maximum', async () => {
+  let requestCount = 0;
+  let executionCount = 0;
+  const client = createAssistantApiClient(
+    async () => {
+      requestCount += 1;
+      return new Response(
+        JSON.stringify(pendingCalendarResponse(requestCount)),
+        { status: 200 },
+      );
+    },
+    async (call) => {
+      executionCount += 1;
+      return calendarToolOutput(call);
+    },
+  );
+
+  await assert.rejects(
+    client(BASE_REQUEST, new AbortController().signal),
+    (error) =>
+      error instanceof AssistantApiClientError &&
+      error.code === 'assistant_unavailable',
+  );
+  assert.equal(executionCount, MAX_ASSISTANT_TOOL_STEPS);
+  assert.equal(requestCount, MAX_ASSISTANT_TOOL_STEPS + 1);
+});
+
+test('the backend refuses another tool step after the configured maximum', async () => {
+  const steps = Array.from({ length: MAX_ASSISTANT_TOOL_STEPS }, (_, index) => {
+    const call = calendarToolCall(index + 1);
+    return { calls: [call], outputs: [calendarToolOutput(call)] };
+  });
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+
+  try {
+    const response = await handleAssistantRequest(
+      assistantRequest({
+        ...BASE_REQUEST,
+        toolContinuation: { steps },
+      }),
+      {
+        allowedOrigin: ALLOWED_ORIGIN,
+        apiKey: 'test-key',
+        fetchImplementation: async () =>
+          calendarToolOpenAIResponse({ callId: 'one-call-too-many' }),
+      },
+    );
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      code: 'assistant_unavailable',
+      error: 'The assistant could not respond.',
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 test('an unrelated response does not query the device calendar', async () => {
   let toolExecutions = 0;
   const client = createAssistantApiClient(
-    async () => new Response(JSON.stringify({ content: 'Hello!' }), { status: 200 }),
+    async () =>
+      new Response(
+        JSON.stringify({ content: 'Hello!', status: 'completed' }),
+        { status: 200 },
+      ),
     async () => {
       toolExecutions += 1;
       throw new Error('Calendar should not be queried.');
@@ -312,11 +465,14 @@ test('the web calendar state is returned as a safe native-app explanation input'
   const output = await executeTool({
     arguments: { includeLocations: false },
     callId: 'calendar-call-1',
+    execution: 'client',
     name: 'get_today_calendar_events',
   });
 
   assert.deepEqual(output, {
     callId: 'calendar-call-1',
+    execution: 'client',
+    name: 'get_today_calendar_events',
     result: {
       message: 'Device calendar access is available only in the native app.',
       status: 'unavailable',
@@ -350,11 +506,13 @@ test('calendar events are sanitized before leaving the device', async () => {
   const withoutLocation = await executeTool({
     arguments: { includeLocations: false },
     callId: 'calendar-call-1',
+    execution: 'client',
     name: 'get_today_calendar_events',
   });
   const withLocation = await executeTool({
     arguments: { includeLocations: true },
     callId: 'calendar-call-2',
+    execution: 'client',
     name: 'get_today_calendar_events',
   });
 
@@ -405,16 +563,19 @@ test('all four read-only calendar tools delegate to the calendar service', async
   await executeTool({
     arguments: { includeLocations: false },
     callId: 'today',
+    execution: 'client',
     name: 'get_today_calendar_events',
   });
   await executeTool({
     arguments: { includeLocations: false },
     callId: 'tomorrow',
+    execution: 'client',
     name: 'get_tomorrow_calendar_events',
   });
   await executeTool({
     arguments: { includeLocations: false },
     callId: 'next',
+    execution: 'client',
     name: 'get_next_calendar_event',
   });
   await executeTool({
@@ -424,6 +585,7 @@ test('all four read-only calendar tools delegate to the calendar service', async
       startDateTime: '2026-08-11T00:00:00.000Z',
     },
     callId: 'range',
+    execution: 'client',
     name: 'get_calendar_events_in_range',
   });
 
@@ -443,7 +605,10 @@ test('the native app can call the backend without a browser Origin header', asyn
   });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { content: 'Native reply' });
+  assert.deepEqual(await response.json(), {
+    content: 'Native reply',
+    status: 'completed',
+  });
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), null);
 });
 
