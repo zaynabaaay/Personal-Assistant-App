@@ -19,6 +19,8 @@ type Message = {
 };
 
 const ASSISTANT_RESPONSE = 'Assistant response will appear here.';
+const INPUT_MIN_HEIGHT = 39;
+const INPUT_MAX_HEIGHT = 108;
 
 function formatTime(value: Date) {
   return new Intl.DateTimeFormat(undefined, {
@@ -51,6 +53,8 @@ export default function HomeScreen() {
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isListening, setIsListening] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
   const nextMessageId = useRef(1);
   const conversationRef = useRef<ScrollView>(null);
 
@@ -79,12 +83,15 @@ export default function HomeScreen() {
 
     setMessages((current) => [...current, userMessage, assistantMessage]);
     setDraft('');
+    setInputHeight(INPUT_MIN_HEIGHT);
     setIsListening(false);
   };
 
   const clearConversation = () => {
     setMessages([]);
     setDraft('');
+    setInputHeight(INPUT_MIN_HEIGHT);
+    setIsInputFocused(false);
     setIsListening(false);
     Keyboard.dismiss();
   };
@@ -92,7 +99,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
         <View style={styles.header}>
@@ -140,17 +147,26 @@ export default function HomeScreen() {
         <View style={styles.composerShell}>
           {isListening ? <Text style={styles.listeningLabel}>Listening…</Text> : null}
 
-          <View style={styles.composer}>
+          <View style={[styles.composer, isInputFocused && styles.composerFocused]}>
             <TextInput
               accessibilityLabel="Message"
               maxLength={1000}
               multiline
+              onBlur={() => setIsInputFocused(false)}
               onChangeText={setDraft}
-              onFocus={() => setIsListening(false)}
+              onContentSizeChange={({ nativeEvent }) => {
+                const nextHeight = Math.ceil(nativeEvent.contentSize.height);
+                setInputHeight(Math.min(INPUT_MAX_HEIGHT, Math.max(INPUT_MIN_HEIGHT, nextHeight)));
+              }}
+              onFocus={() => {
+                setIsInputFocused(true);
+                setIsListening(false);
+              }}
               placeholder={isListening ? 'Listening…' : 'Ask anything…'}
               placeholderTextColor="#8B8983"
               returnKeyType="default"
-              style={styles.input}
+              scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
+              style={[styles.input, { height: inputHeight }]}
               value={draft}
             />
 
@@ -181,7 +197,7 @@ export default function HomeScreen() {
                 pressed && draft.trim() && styles.sendButtonPressed,
               ]}
             >
-              <Text style={styles.sendArrow}>↑</Text>
+              <Text style={[styles.sendArrow, !draft.trim() && styles.sendArrowDisabled]}>↑</Text>
             </Pressable>
           </View>
         </View>
@@ -287,13 +303,19 @@ const styles = StyleSheet.create({
     paddingRight: 5,
     paddingTop: 5,
   },
+  composerFocused: {
+    backgroundColor: '#FEFDFB',
+    borderColor: '#D8D4CC',
+  },
   input: {
     color: '#33312D',
     flex: 1,
     fontSize: 15,
     lineHeight: 21,
-    maxHeight: 120,
-    minHeight: 39,
+    maxHeight: INPUT_MAX_HEIGHT,
+    minHeight: INPUT_MIN_HEIGHT,
+    outlineColor: 'transparent',
+    outlineWidth: 0,
     paddingRight: 8,
     paddingTop: 8,
     textAlignVertical: 'top',
@@ -361,7 +383,7 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     alignItems: 'center',
-    backgroundColor: '#36342F',
+    backgroundColor: '#D2CEC6',
     borderRadius: 20,
     height: 40,
     justifyContent: 'center',
@@ -369,18 +391,21 @@ const styles = StyleSheet.create({
     width: 40,
   },
   sendButtonDisabled: {
-    backgroundColor: '#DDDAD4',
+    backgroundColor: '#ECE9E3',
   },
   sendButtonPressed: {
-    backgroundColor: '#4A4842',
+    backgroundColor: '#C5C0B7',
     transform: [{ scale: 0.96 }],
   },
   sendArrow: {
-    color: '#FFFFFF',
+    color: '#4E4B45',
     fontSize: 22,
     fontWeight: '500',
     lineHeight: 24,
     marginTop: -2,
+  },
+  sendArrowDisabled: {
+    color: '#AAA69E',
   },
   pressed: {
     opacity: 0.55,
