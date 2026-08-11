@@ -22,12 +22,19 @@ import {
   executeAssistantServerTool,
   type AssistantServerToolExecutor,
 } from './server-tool-executor';
+import type { AccessTokenVerifier } from '../auth/authenticated-user';
+import {
+  createSupabaseAccessTokenVerifier,
+  InvalidAccessTokenError,
+  SupabaseAuthUnavailableError,
+} from '../auth/supabase-token-verifier';
 
 declare const process: {
   env: Record<string, string | undefined>;
 };
 
 const DEFAULT_MODEL = 'gpt-5.4-mini';
+const defaultVerifyAccessToken = createSupabaseAccessTokenVerifier();
 
 export type AssistantHandlerOptions = {
   allowedOrigin?: string;
@@ -35,6 +42,7 @@ export type AssistantHandlerOptions = {
   executeServerTool?: AssistantServerToolExecutor;
   fetchImplementation?: typeof fetch;
   model?: string;
+  verifyAccessToken?: AccessTokenVerifier;
 };
 
 export { ASSISTANT_REQUEST_LIMITS };
@@ -51,7 +59,7 @@ function securityHeaders() {
 function corsHeaders(origin: string) {
   return {
     ...securityHeaders(),
-    'Access-Control-Allow-Headers': `Content-Type, ${ASSISTANT_CLIENT_HEADER}`,
+    'Access-Control-Allow-Headers': `Authorization, Content-Type, ${ASSISTANT_CLIENT_HEADER}`,
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Max-Age': '86400',
@@ -101,8 +109,11 @@ function outputMatchesCall(
 async function executeServerCalls(
   calls: readonly AssistantToolCall[],
   executor: AssistantServerToolExecutor,
+  userId: string,
 ) {
-  const outputs = await Promise.all(calls.map((call) => executor(call)));
+  const outputs = await Promise.all(
+    calls.map((call) => executor(call, { userId })),
+  );
 
   if (
     !outputs.every(isAssistantToolOutput) ||
@@ -112,6 +123,17 @@ async function executeServerCalls(
   }
 
   return outputs;
+}
+
+function getBearerToken(request: Request) {
+  const authorization = request.headers.get('Authorization');
+
+  if (!authorization) {
+    return null;
+  }
+
+  const match = /^Bearer ([^\s]+)$/.exec(authorization);
+  return match?.[1] ?? null;
 }
 
 export async function handleAssistantRequest(
@@ -146,6 +168,46 @@ export async function handleAssistantRequest(
       'invalid_request',
       'The assistant request was rejected.',
       405,
+      responseOrigin,
+    );
+  }
+
+  const accessToken = getBearerToken(request);
+
+  if (!accessToken) {
+    return errorResponse(
+      'authentication_required',
+      'Authentication is required.',
+      401,
+      responseOrigin,
+    );
+  }
+
+  let authenticatedUser;
+
+  try {
+    authenticatedUser = await (
+      options.verifyAccessToken ?? defaultVerifyAccessToken
+    )(accessToken);
+  } catch (error) {
+    if (error instanceof SupabaseAuthUnavailableError) {
+      console.error('Supabase authentication is not configured.');
+      return errorResponse(
+        'assistant_unavailable',
+        'The assistant is unavailable.',
+        500,
+        responseOrigin,
+      );
+    }
+
+    if (!(error instanceof InvalidAccessTokenError)) {
+      console.error('Supabase access-token verification failed.');
+    }
+
+    return errorResponse(
+      'authentication_required',
+      'Authentication is required.',
+      401,
       responseOrigin,
     );
   }
@@ -217,7 +279,11 @@ export async function handleAssistantRequest(
       const clientCalls = modelResult.toolCalls.filter(
         (call) => call.execution === 'client',
       );
-      const serverOutputs = await executeServerCalls(serverCalls, executeServerTool);
+      const serverOutputs = await executeServerCalls(
+        serverCalls,
+        executeServerTool,
+        authenticatedUser.id,
+      );
       const step: AssistantToolStep = {
         calls: modelResult.toolCalls,
         outputs: serverOutputs,

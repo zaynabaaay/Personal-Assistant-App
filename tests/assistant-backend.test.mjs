@@ -3,13 +3,12 @@ import test from 'node:test';
 
 import {
   ASSISTANT_REQUEST_LIMITS,
-  handleAssistantRequest,
+  handleAssistantRequest as handleUnauthenticatedAssistantRequest,
 } from '../api/assistant.ts';
 import { MAX_ASSISTANT_TOOL_STEPS } from '../src/contracts/assistant/tool-contract.ts';
 import {
   AssistantApiClientError,
-  assistantApiClient,
-  createAssistantApiClient,
+  createAssistantApiClient as createUnauthenticatedAssistantApiClient,
 } from '../src/services/assistant/assistant-api-client.ts';
 import { createAssistantCalendarToolExecutor } from '../src/services/assistant/assistant-calendar-executor.ts';
 import { AssistantService } from '../src/services/assistant/assistant-service.ts';
@@ -17,8 +16,11 @@ import {
   ASSISTANT_CLIENT_HEADER,
   ASSISTANT_CLIENT_ID,
 } from '../src/contracts/assistant/assistant-contract.ts';
+import { InvalidAccessTokenError } from '../src/server/auth/supabase-token-verifier.ts';
 
 const ALLOWED_ORIGIN = 'https://example.com';
+const TEST_ACCESS_TOKEN = 'test-supabase-access-token';
+const TEST_USER_ID = '11111111-1111-1111-1111-111111111111';
 const BASE_REQUEST = {
   context: {
     currentLocalDate: 'August 11, 2026',
@@ -30,11 +32,35 @@ const BASE_REQUEST = {
   sessionId: 'assistant-session-test',
 };
 
+async function verifyTestAccessToken(accessToken) {
+  if (accessToken !== TEST_ACCESS_TOKEN) {
+    throw new InvalidAccessTokenError();
+  }
+
+  return { id: TEST_USER_ID };
+}
+
+function handleAssistantRequest(request, options = {}) {
+  return handleUnauthenticatedAssistantRequest(request, {
+    verifyAccessToken: verifyTestAccessToken,
+    ...options,
+  });
+}
+
+function createAssistantApiClient(fetchImplementation, executeTool) {
+  return createUnauthenticatedAssistantApiClient(
+    fetchImplementation,
+    executeTool,
+    async () => TEST_ACCESS_TOKEN,
+  );
+}
+
 function assistantRequest(body, headers = {}) {
   return new Request('https://assistant.example/api/assistant', {
     body: typeof body === 'string' ? body : JSON.stringify(body),
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${TEST_ACCESS_TOKEN}`,
       Origin: ALLOWED_ORIGIN,
       ...headers,
     },
@@ -110,6 +136,7 @@ function nativeAssistantRequest(body, headers = {}) {
     body: typeof body === 'string' ? body : JSON.stringify(body),
     headers: {
       [ASSISTANT_CLIENT_HEADER]: ASSISTANT_CLIENT_ID,
+      Authorization: `Bearer ${TEST_ACCESS_TOKEN}`,
       'Content-Type': 'application/json',
       ...headers,
     },
@@ -283,6 +310,7 @@ test('calendar metadata outside the allowed minimum fields is rejected', async (
 
 test('the app client queries calendar only after the backend requests a tool', async () => {
   const postedBodies = [];
+  const authorizationHeaders = [];
   let toolExecutions = 0;
   const responses = [
     {
@@ -303,6 +331,7 @@ test('the app client queries calendar only after the backend requests a tool', a
   const client = createAssistantApiClient(
     async (_url, init) => {
       postedBodies.push(JSON.parse(String(init?.body)));
+      authorizationHeaders.push(new Headers(init?.headers).get('Authorization'));
       return new Response(JSON.stringify(responses.shift()), { status: 200 });
     },
     async (call) => {
@@ -331,6 +360,11 @@ test('the app client queries calendar only after the backend requests a tool', a
   assert.equal(content, 'You have one event at 5 PM.');
   assert.equal(toolExecutions, 1);
   assert.equal(postedBodies.length, 2);
+  assert.deepEqual(authorizationHeaders, [
+    `Bearer ${TEST_ACCESS_TOKEN}`,
+    `Bearer ${TEST_ACCESS_TOKEN}`,
+  ]);
+  assert.doesNotMatch(JSON.stringify(postedBodies), new RegExp(TEST_ACCESS_TOKEN));
   assert.equal(postedBodies[0].toolContinuation, undefined);
   assert.equal(
     postedBodies[1].toolContinuation.steps[0].outputs[0].result.events[0].id,
@@ -612,6 +646,101 @@ test('the native app can call the backend without a browser Origin header', asyn
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), null);
 });
 
+test('the backend verifies the bearer token before calling OpenAI', async () => {
+  let verifiedToken;
+  let providerCalled = false;
+  const response = await handleUnauthenticatedAssistantRequest(
+    assistantRequest(BASE_REQUEST),
+    {
+      allowedOrigin: ALLOWED_ORIGIN,
+      apiKey: 'test-key',
+      fetchImplementation: async () => {
+        providerCalled = true;
+        return successfulOpenAIResponse('Authenticated reply');
+      },
+      verifyAccessToken: async (accessToken) => {
+        verifiedToken = accessToken;
+        return { id: TEST_USER_ID };
+      },
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(verifiedToken, TEST_ACCESS_TOKEN);
+  assert.equal(providerCalled, true);
+});
+
+test('missing and invalid bearer tokens are rejected safely', async () => {
+  const missingTokenRequest = new Request(
+    'https://assistant.example/api/assistant',
+    {
+      body: JSON.stringify(BASE_REQUEST),
+      headers: { 'Content-Type': 'application/json', Origin: ALLOWED_ORIGIN },
+      method: 'POST',
+    },
+  );
+  const missingResponse = await handleUnauthenticatedAssistantRequest(
+    missingTokenRequest,
+    {
+      allowedOrigin: ALLOWED_ORIGIN,
+      apiKey: 'test-key',
+      verifyAccessToken: verifyTestAccessToken,
+    },
+  );
+  const invalidResponse = await handleUnauthenticatedAssistantRequest(
+    assistantRequest(BASE_REQUEST, { Authorization: 'Bearer invalid-token' }),
+    {
+      allowedOrigin: ALLOWED_ORIGIN,
+      apiKey: 'test-key',
+      verifyAccessToken: verifyTestAccessToken,
+    },
+  );
+
+  for (const response of [missingResponse, invalidResponse]) {
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), {
+      code: 'authentication_required',
+      error: 'Authentication is required.',
+    });
+  }
+});
+
+test('CORS preflight allows the Authorization header without requiring a token', async () => {
+  const response = await handleUnauthenticatedAssistantRequest(
+    new Request('https://assistant.example/api/assistant', {
+      headers: { Origin: ALLOWED_ORIGIN },
+      method: 'OPTIONS',
+    }),
+    { allowedOrigin: ALLOWED_ORIGIN },
+  );
+
+  assert.equal(response.status, 204);
+  assert.match(
+    response.headers.get('Access-Control-Allow-Headers') ?? '',
+    /Authorization/,
+  );
+});
+
+test('the assistant client rejects a missing session before making a request', async () => {
+  let requestMade = false;
+  const client = createUnauthenticatedAssistantApiClient(
+    async () => {
+      requestMade = true;
+      return successfulOpenAIResponse();
+    },
+    undefined,
+    async () => null,
+  );
+
+  await assert.rejects(
+    client(BASE_REQUEST, new AbortController().signal),
+    (error) =>
+      error instanceof AssistantApiClientError &&
+      error.code === 'authentication_required',
+  );
+  assert.equal(requestMade, false);
+});
+
 test('originless requests without the app client marker remain rejected', async () => {
   const response = await handleAssistantRequest(
     new Request('https://assistant.example/api/assistant', {
@@ -671,7 +800,11 @@ test('streamed oversized bodies are rejected without a Content-Length header', a
   const request = new Request('https://assistant.example/api/assistant', {
     body: stream,
     duplex: 'half',
-    headers: { 'Content-Type': 'application/json', Origin: ALLOWED_ORIGIN },
+    headers: {
+      Authorization: `Bearer ${TEST_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json',
+      Origin: ALLOWED_ORIGIN,
+    },
     method: 'POST',
   });
   const response = await handleAssistantRequest(request, {
@@ -754,10 +887,11 @@ test('provider details remain in server logs and are not returned to the client'
 test('the backend client converts a Vercel 429 into a safe application error', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response('Rate limited by the platform', { status: 429 });
+  const client = createAssistantApiClient();
 
   try {
     await assert.rejects(
-      assistantApiClient(BASE_REQUEST, new AbortController().signal),
+      client(BASE_REQUEST, new AbortController().signal),
       (error) =>
         error instanceof AssistantApiClientError &&
         error.code === 'rate_limited' &&

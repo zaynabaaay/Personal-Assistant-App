@@ -27,6 +27,7 @@ export type AssistantApiRequest = AssistantRequest & {
 
 export type AssistantErrorCode =
   | 'assistant_unavailable'
+  | 'authentication_required'
   | 'invalid_request'
   | 'rate_limited'
   | 'request_too_large';

@@ -12,6 +12,7 @@ import type {
   AssistantToolOutput,
   AssistantToolStep,
 } from '@/contracts/assistant';
+import { authService } from '@/services/auth';
 
 import { executeAssistantClientTool } from './assistant-client-tool-executor';
 import type { AssistantProvider } from './assistant-types';
@@ -27,6 +28,7 @@ type AssistantApiErrorBody = {
 type AssistantClientToolExecutor = (
   call: AssistantToolCall,
 ) => Promise<AssistantToolOutput>;
+type AccessTokenProvider = () => Promise<string | null>;
 
 const DEFAULT_ASSISTANT_API_URL =
   'https://personal-assistant-app-ten.vercel.app/api/assistant';
@@ -34,6 +36,7 @@ const ASSISTANT_API_URL =
   process.env.EXPO_PUBLIC_ASSISTANT_API_URL ?? DEFAULT_ASSISTANT_API_URL;
 const ERROR_MESSAGES: Record<AssistantErrorCode, string> = {
   assistant_unavailable: 'The assistant could not respond. Please try again.',
+  authentication_required: 'Please sign in again to continue.',
   invalid_request: 'The assistant request was invalid.',
   rate_limited: 'Too many requests. Please wait a moment and try again.',
   request_too_large: 'That conversation is too large to send.',
@@ -73,11 +76,19 @@ async function postAssistantRequest(
   request: AssistantApiRequest,
   signal: AbortSignal,
   fetchImplementation: typeof fetch,
+  getAccessToken: AccessTokenProvider,
 ) {
+  const accessToken = await getAccessToken();
+
+  if (!accessToken) {
+    throw new AssistantApiClientError('authentication_required');
+  }
+
   const response = await fetchImplementation(ASSISTANT_API_URL, {
     body: JSON.stringify(request),
     headers: {
       [ASSISTANT_CLIENT_HEADER]: ASSISTANT_CLIENT_ID,
+      Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
     method: 'POST',
@@ -164,6 +175,7 @@ async function completeClientToolStep(
 export function createAssistantApiClient(
   fetchImplementation?: typeof fetch,
   executeTool: AssistantClientToolExecutor = executeAssistantClientTool,
+  getAccessToken: AccessTokenProvider = () => authService.getAccessToken(),
 ): AssistantProvider {
   return async (request, signal) => {
     const requestFetch = fetchImplementation ?? fetch;
@@ -179,6 +191,7 @@ export function createAssistantApiClient(
         },
         signal,
         requestFetch,
+        getAccessToken,
       );
       const content = getCompletedContent(body);
 

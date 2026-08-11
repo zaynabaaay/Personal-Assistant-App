@@ -21,6 +21,18 @@ Configure these Vercel environment variables:
 
 - `OPENAI_API_KEY`: the project-scoped OpenAI API key
 - `ALLOWED_ORIGIN`: `https://zaynabaaay.github.io`
+- `SUPABASE_URL`: the Supabase project URL
+- `SUPABASE_PUBLISHABLE_KEY`: the Supabase publishable key
+
+Configure the native and web clients with:
+
+- `EXPO_PUBLIC_SUPABASE_URL`: the same Supabase project URL
+- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: the same publishable key
+
+The publishable key is designed for client use. Do not add a Supabase secret or
+service-role key to this project. The assistant sends the current Supabase
+access token in the `Authorization` header, and the Vercel Function verifies it
+before calling OpenAI.
 
 Build the GitHub Pages client with the public function endpoint:
 
