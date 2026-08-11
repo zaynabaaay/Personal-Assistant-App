@@ -28,8 +28,11 @@ Build the GitHub Pages client with the public function endpoint:
 EXPO_PUBLIC_ASSISTANT_API_URL=https://your-vercel-project.vercel.app/api/assistant npm run deploy
 ```
 
-The public endpoint URL is safe to include in the client. Never prefix the OpenAI
-API key with `EXPO_PUBLIC_` or add it to GitHub Pages.
+The production client defaults to
+`https://personal-assistant-app-ten.vercel.app/api/assistant`; the environment
+variable provides an override for other deployments. The public endpoint URL is
+safe to include in the client. Never prefix the OpenAI API key with `EXPO_PUBLIC_`
+or add it to GitHub Pages.
 
 ## Deploy to GitHub Pages
 

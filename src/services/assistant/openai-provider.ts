@@ -9,7 +9,10 @@ type AssistantApiResponse = {
   error?: unknown;
 };
 
-const ASSISTANT_API_URL = process.env.EXPO_PUBLIC_ASSISTANT_API_URL;
+const DEFAULT_ASSISTANT_API_URL =
+  'https://personal-assistant-app-ten.vercel.app/api/assistant';
+const ASSISTANT_API_URL =
+  process.env.EXPO_PUBLIC_ASSISTANT_API_URL ?? DEFAULT_ASSISTANT_API_URL;
 
 function getErrorMessage(response: AssistantApiResponse) {
   return typeof response.error === 'string'
