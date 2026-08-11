@@ -1,41 +1,18 @@
-import { createAssistantContext, type AssistantContext } from './assistant-context';
+import { createAssistantContext } from './assistant-context';
+import { openAIProvider } from './openai-provider';
+import type {
+  AssistantMessage,
+  AssistantProvider,
+  AssistantRequest,
+  AssistantResult,
+} from './assistant-types';
 
-export type AssistantMessage = {
-  content: string;
-  role: 'user' | 'assistant';
-};
-
-export type AssistantRequest = {
-  context: AssistantContext;
-  messages: readonly AssistantMessage[];
-  sessionId: string;
-};
-
-export type AssistantResult =
-  | {
-      message: AssistantMessage;
-      sessionId: string;
-      status: 'success';
-    }
-  | {
-      error: {
-        code: 'provider_error';
-        message: string;
-      };
-      sessionId: string;
-      status: 'error';
-    }
-  | {
-      sessionId: string;
-      status: 'cancelled';
-    };
-
-export type AssistantProvider = (
-  request: AssistantRequest,
-  signal: AbortSignal,
-) => Promise<string>;
-
-const PLACEHOLDER_RESPONSE = 'Assistant response will appear here.';
+export type {
+  AssistantMessage,
+  AssistantProvider,
+  AssistantRequest,
+  AssistantResult,
+} from './assistant-types';
 
 let nextSessionNumber = 1;
 
@@ -43,21 +20,11 @@ function createSessionId() {
   return `assistant-session-${nextSessionNumber++}`;
 }
 
-const placeholderProvider: AssistantProvider = async (_request, signal) => {
-  await Promise.resolve();
-
-  if (signal.aborted) {
-    throw new Error('Assistant request cancelled.');
-  }
-
-  return PLACEHOLDER_RESPONSE;
-};
-
 export class AssistantService {
   private activeController: AbortController | null = null;
   private sessionId = createSessionId();
 
-  constructor(private readonly provider: AssistantProvider = placeholderProvider) {}
+  constructor(private readonly provider: AssistantProvider = openAIProvider) {}
 
   cancelRequest() {
     this.activeController?.abort();
