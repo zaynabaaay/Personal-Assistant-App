@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Personal Assistant",
+    "slug": "personal-assistant-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "personalassistant",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#F5F4F0",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F5F4F0",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 88
+        }
+      ]
+    ],
+    "experiments": {
+      "baseUrl": "/Personal-Assistant-App",
+      "typedRoutes": true
+    }
+  }
+}
