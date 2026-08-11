@@ -9,7 +9,9 @@ declare const process: {
 
 type OpenAIResponse = {
   error?: {
+    code?: unknown;
     message?: unknown;
+    type?: unknown;
   };
   output?: Array<{
     content?: Array<{
@@ -31,6 +33,14 @@ const DEFAULT_MODEL = 'gpt-5.6-sol';
 const MAX_MESSAGE_COUNT = 50;
 const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_TOTAL_MESSAGE_LENGTH = 30_000;
+const SAFE_OPENAI_ERROR_CODES = new Set([
+  'billing_not_active',
+  'insufficient_quota',
+  'invalid_api_key',
+  'model_not_found',
+  'permission_denied',
+  'rate_limit_exceeded',
+]);
 
 function corsHeaders(origin: string) {
   return {
@@ -131,6 +141,17 @@ function extractOutputText(response: OpenAIResponse) {
     .trim();
 }
 
+function getSafeOpenAIErrorCode(response: OpenAIResponse) {
+  const candidate =
+    typeof response.error?.code === 'string'
+      ? response.error.code
+      : typeof response.error?.type === 'string'
+        ? response.error.type
+        : null;
+
+  return candidate && SAFE_OPENAI_ERROR_CODES.has(candidate) ? candidate : 'provider_error';
+}
+
 export async function handleAssistantRequest(
   request: Request,
   options: AssistantHandlerOptions = {},
@@ -203,7 +224,14 @@ export async function handleAssistantRequest(
         requestId: openAIResult.headers.get('x-request-id'),
         status: openAIResult.status,
       });
-      return jsonResponse({ error: 'The assistant could not respond.' }, 502, allowedOrigin);
+      return jsonResponse(
+        {
+          code: getSafeOpenAIErrorCode(openAIResponse),
+          error: 'The assistant could not respond.',
+        },
+        502,
+        allowedOrigin,
+      );
     }
 
     const content = extractOutputText(openAIResponse);
