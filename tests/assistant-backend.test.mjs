@@ -171,6 +171,8 @@ test('normal chat reaches OpenAI with the existing conversation and safe setting
       'get_tomorrow_calendar_events',
       'get_next_calendar_event',
       'get_calendar_events_in_range',
+      'list_projects',
+      'get_project_context',
     ],
   );
 });

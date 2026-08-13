@@ -11,6 +11,19 @@ import type {
   ProjectWorkSessionEntry,
 } from '@/domain/projects';
 
+export type ProjectRepositoryChanges = {
+  changeEvents?: ProjectChangeEvent[];
+  decisions?: ProjectDecision[];
+  deliverables?: ProjectDeliverable[];
+  knowledgeItems?: ProjectKnowledgeItem[];
+  milestones?: ProjectMilestone[];
+  projects?: Project[];
+  resources?: ProjectResource[];
+  tasks?: ProjectTask[];
+  workSessionEntries?: ProjectWorkSessionEntry[];
+  workSessions?: ProjectWorkSession[];
+};
+
 export interface ProjectRepository {
   addChangeEvent(event: ProjectChangeEvent): Promise<void>;
   getDecision(id: string): Promise<ProjectDecision | null>;
@@ -37,5 +50,5 @@ export interface ProjectRepository {
   saveTask(task: ProjectTask): Promise<void>;
   saveWorkSession(session: ProjectWorkSession): Promise<void>;
   saveWorkSessionEntry(entry: ProjectWorkSessionEntry): Promise<void>;
+  saveAtomically(changes: ProjectRepositoryChanges): Promise<void>;
 }
-

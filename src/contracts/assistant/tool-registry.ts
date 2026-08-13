@@ -1,4 +1,5 @@
 import { ASSISTANT_CALENDAR_TOOL_CONTRACTS } from './calendar-tool-contract';
+import { ASSISTANT_PROJECT_TOOL_CONTRACTS } from './project-tool-contract';
 import type {
   AssistantToolCall,
   AssistantToolContract,
@@ -8,6 +9,7 @@ import type {
 
 export const ASSISTANT_TOOL_CONTRACTS: readonly AssistantToolContract[] = [
   ...ASSISTANT_CALENDAR_TOOL_CONTRACTS,
+  ...ASSISTANT_PROJECT_TOOL_CONTRACTS,
 ];
 
 export function getAssistantToolContract(name: unknown) {

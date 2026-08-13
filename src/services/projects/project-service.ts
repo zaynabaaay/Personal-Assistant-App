@@ -85,8 +85,10 @@ export class ProjectService {
       summary: `Accepted project knowledge: ${accepted.title ?? accepted.content}`,
     });
 
-    await this.repository.saveKnowledgeItem(accepted);
-    await this.repository.addChangeEvent(changeEvent);
+    await this.repository.saveAtomically({
+      changeEvents: [changeEvent],
+      knowledgeItems: [accepted],
+    });
 
     return { changeEvent, value: accepted };
   }
@@ -111,8 +113,10 @@ export class ProjectService {
       summary: `Closed work session${closed.title ? ` “${closed.title}”` : ''}.`,
     });
 
-    await this.repository.saveWorkSession(closed);
-    await this.repository.addChangeEvent(changeEvent);
+    await this.repository.saveAtomically({
+      changeEvents: [changeEvent],
+      workSessions: [closed],
+    });
 
     return { changeEvent, value: { entries, session: closed } };
   }
@@ -135,8 +139,10 @@ export class ProjectService {
       summary: `Completed task: ${completed.title}`,
     });
 
-    await this.repository.saveTask(completed);
-    await this.repository.addChangeEvent(changeEvent);
+    await this.repository.saveAtomically({
+      changeEvents: [changeEvent],
+      tasks: [completed],
+    });
 
     return { changeEvent, value: completed };
   }
@@ -176,9 +182,10 @@ export class ProjectService {
       summary: `Replaced decision “${previous.statement}” with “${replacement.statement}”.`,
     });
 
-    await this.repository.saveDecision(superseded);
-    await this.repository.saveDecision(replacement);
-    await this.repository.addChangeEvent(changeEvent);
+    await this.repository.saveAtomically({
+      changeEvents: [changeEvent],
+      decisions: [superseded, replacement],
+    });
 
     return {
       changeEvent,
@@ -221,9 +228,10 @@ export class ProjectService {
       summary: `Replaced project knowledge: ${previous.title ?? previous.content}`,
     });
 
-    await this.repository.saveKnowledgeItem(superseded);
-    await this.repository.saveKnowledgeItem(replacement);
-    await this.repository.addChangeEvent(changeEvent);
+    await this.repository.saveAtomically({
+      changeEvents: [changeEvent],
+      knowledgeItems: [superseded, replacement],
+    });
 
     return {
       changeEvent,
@@ -281,4 +289,3 @@ export class ProjectService {
     return session;
   }
 }
-

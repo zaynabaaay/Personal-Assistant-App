@@ -62,6 +62,19 @@ Production also uses a Vercel WAF rule named `Assistant API rate limit`:
 The WAF rule is configured in the Vercel dashboard and does not require an
 additional application environment variable.
 
+## Project persistence
+
+The Projects domain is persisted through `SupabaseProjectRepository`. Apply the
+SQL migrations in `supabase/migrations` to the same Supabase project used for
+authentication before using the repository in a deployed build.
+
+Project tables use the authenticated Supabase user as their owner. Row Level
+Security compares every row's `owner_id` with `auth.uid()`; anonymous access is
+revoked. Normal Project operations use the existing publishable client key and
+authenticated session, never a service-role key. Meaningful domain operations
+are committed with `commit_project_changes`, which writes their entity changes
+and history event in one database transaction.
+
 ## Deploy to GitHub Pages
 
 ```bash

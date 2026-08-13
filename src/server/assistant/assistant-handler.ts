@@ -109,10 +109,11 @@ function outputMatchesCall(
 async function executeServerCalls(
   calls: readonly AssistantToolCall[],
   executor: AssistantServerToolExecutor,
+  accessToken: string,
   userId: string,
 ) {
   const outputs = await Promise.all(
-    calls.map((call) => executor(call, { userId })),
+    calls.map((call) => executor(call, { accessToken, userId })),
   );
 
   if (
@@ -282,6 +283,7 @@ export async function handleAssistantRequest(
       const serverOutputs = await executeServerCalls(
         serverCalls,
         executeServerTool,
+        accessToken,
         authenticatedUser.id,
       );
       const step: AssistantToolStep = {

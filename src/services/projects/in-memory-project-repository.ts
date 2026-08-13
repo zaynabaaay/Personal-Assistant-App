@@ -12,7 +12,10 @@ import type {
   ProjectWorkSessionEntry,
 } from '@/domain/projects';
 
-import type { ProjectRepository } from './project-repository';
+import type {
+  ProjectRepository,
+  ProjectRepositoryChanges,
+} from './project-repository';
 
 export type InMemoryProjectRepositorySeed = {
   changeEvents?: ProjectChangeEvent[];
@@ -186,9 +189,26 @@ export class InMemoryProjectRepository implements ProjectRepository {
     this.workSessionEntries.set(entry.id, clone(entry));
   }
 
+  async saveAtomically(changes: ProjectRepositoryChanges) {
+    const apply = <T extends { id: string }>(
+      target: Map<string, T>,
+      values: readonly T[] | undefined,
+    ) => values?.forEach((value) => target.set(value.id, clone(value)));
+
+    apply(this.projects, changes.projects);
+    apply(this.milestones, changes.milestones);
+    apply(this.deliverables, changes.deliverables);
+    apply(this.workSessions, changes.workSessions);
+    apply(this.tasks, changes.tasks);
+    apply(this.knowledgeItems, changes.knowledgeItems);
+    apply(this.decisions, changes.decisions);
+    apply(this.resources, changes.resources);
+    apply(this.workSessionEntries, changes.workSessionEntries);
+    apply(this.changeEvents, changes.changeEvents);
+  }
+
   private get<T>(values: Map<string, T>, id: string) {
     const value = values.get(id);
     return value ? clone(value) : null;
   }
 }
-
