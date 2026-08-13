@@ -12,7 +12,7 @@ import type {
   ProjectWorkSession,
   ProjectWorkSessionEntry,
 } from '@/domain/projects';
-import { getSupabaseClient } from '@/services/auth/supabase-client';
+import { getSupabaseClient } from '../auth/supabase-client';
 
 import type {
   ProjectRepository,
