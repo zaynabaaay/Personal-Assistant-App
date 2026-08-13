@@ -199,6 +199,7 @@ test('exploratory language is governed by no-write instructions and invalid auth
   assert.equal(response.status, 200);
   assert.equal(executions, 0);
   assert.match(instructions, /Brainstorming, maybe, perhaps/);
+  assert.match(instructions, /Never say or imply that anything was created/);
 
   const rejected = await handleAssistantRequest(request('Create a project.', 'invalid'), { allowedOrigin: 'https://example.com', apiKey: 'key',
     executeServerTool: async () => { executions += 1; throw new Error('unexpected'); }, fetchImplementation: async () => { throw new Error('unexpected'); }, verifyAccessToken: verifyToken });

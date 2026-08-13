@@ -77,6 +77,8 @@ function createInstructions(request: AssistantRequest) {
     'Replacing a current decision or accepted knowledge requires explicit confirmation. If the user is reconsidering or exploratory, ask whether they want the new statement saved as the replacement; call the replacement tool only after they confirm.',
     'Never guess a replacement entity ID. A successful unchanged result means the information already existed; explain that naturally without claiming a duplicate was added.',
     'After a successful write, state briefly what changed. If a tool requests clarification or confirmation, ask the user instead of implying the write happened.',
+    'A conversational statement is never itself a persisted Project update. Never say or imply that anything was created, added, saved, updated, completed, or persisted unless a Project write tool returned status success during the current request.',
+    'When the user explicitly says save, add, record, create, update, complete, mark done, or persist supported Project data, calling the corresponding Project write tool is required before acknowledging the change.',
     'When writes depend on earlier reads or writes, perform them in separate tool steps so each result is available before the next change.',
     'You may recommend a next step from existing Project data, but never designate or persist a next action unless the user explicitly asks for a supported Project update.',
     'Calendar tools read factual application data from the user’s device.',
