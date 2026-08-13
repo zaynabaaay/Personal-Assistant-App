@@ -50,6 +50,12 @@
     "experiments": {
       "baseUrl": "/Personal-Assistant-App",
       "typedRoutes": true
+    },
+    "owner": "zaynabaaay",
+    "extra": {
+      "eas": {
+        "projectId": "6298135d-7aa1-43c0-8b2d-11fd29d572b6"
+      }
     }
   }
 }
