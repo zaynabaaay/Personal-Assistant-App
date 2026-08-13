@@ -80,8 +80,16 @@ export class InMemoryProjectRepository implements ProjectRepository {
     return this.get(this.decisions, id);
   }
 
+  async getDeliverable(id: string) {
+    return this.get(this.deliverables, id);
+  }
+
   async getKnowledgeItem(id: string) {
     return this.get(this.knowledgeItems, id);
+  }
+
+  async getMilestone(id: string) {
+    return this.get(this.milestones, id);
   }
 
   async getProject(id: string) {

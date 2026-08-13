@@ -146,6 +146,8 @@ test('projects and every existing child shape survive a fresh repository session
 
   const fresh = repository(database);
   assert.deepEqual(await fresh.getProject(PROJECT_ID), project());
+  assert.equal((await fresh.getMilestone('milestone-1')).name, 'First');
+  assert.equal((await fresh.getDeliverable('deliverable-1')).name, 'Draft');
   assert.equal((await fresh.listMilestones(PROJECT_ID))[0].id, 'milestone-1');
   assert.equal((await fresh.listDeliverables(PROJECT_ID))[0].milestoneId, 'milestone-1');
   assert.equal((await fresh.listTasks(PROJECT_ID))[0].sourceSessionId, 'session-1');

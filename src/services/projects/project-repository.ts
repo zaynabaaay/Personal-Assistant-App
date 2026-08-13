@@ -27,7 +27,9 @@ export type ProjectRepositoryChanges = {
 export interface ProjectRepository {
   addChangeEvent(event: ProjectChangeEvent): Promise<void>;
   getDecision(id: string): Promise<ProjectDecision | null>;
+  getDeliverable(id: string): Promise<ProjectDeliverable | null>;
   getKnowledgeItem(id: string): Promise<ProjectKnowledgeItem | null>;
+  getMilestone(id: string): Promise<ProjectMilestone | null>;
   getProject(id: string): Promise<Project | null>;
   getTask(id: string): Promise<ProjectTask | null>;
   getWorkSession(id: string): Promise<ProjectWorkSession | null>;

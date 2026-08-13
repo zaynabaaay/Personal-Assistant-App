@@ -329,7 +329,9 @@ export class SupabaseProjectRepository implements ProjectRepository {
 
   async addChangeEvent(value: ProjectChangeEvent) { await this.upsert('project_change_events', changeEventRow(value)); }
   async getDecision(id: string) { return this.getOne('project_decisions', id, toDecision); }
+  async getDeliverable(id: string) { return this.getOne('project_deliverables', id, toDeliverable); }
   async getKnowledgeItem(id: string) { return this.getOne('project_knowledge_items', id, toKnowledgeItem); }
+  async getMilestone(id: string) { return this.getOne('project_milestones', id, toMilestone); }
   async getProject(id: string) { return this.getOne('projects', id, toProject); }
   async getTask(id: string) { return this.getOne('project_tasks', id, toTask); }
   async getWorkSession(id: string) { return this.getOne('project_work_sessions', id, toWorkSession); }

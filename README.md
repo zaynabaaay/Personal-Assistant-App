@@ -75,6 +75,12 @@ authenticated session, never a service-role key. Meaningful domain operations
 are committed with `commit_project_changes`, which writes their entity changes
 and history event in one database transaction.
 
+Tina's server-executed Project tools support bounded reads and explicit,
+controlled writes. Ordinary operational requests can create or update Project
+records, while replacing accepted knowledge or an active decision requires a
+confirmed replacement. The Project service suppresses obvious exact duplicates
+and preserves superseded records through the existing atomic domain operations.
+
 ## Deploy to GitHub Pages
 
 ```bash

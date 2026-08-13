@@ -112,9 +112,13 @@ async function executeServerCalls(
   accessToken: string,
   userId: string,
 ) {
-  const outputs = await Promise.all(
-    calls.map((call) => executor(call, { accessToken, userId })),
-  );
+  const outputs: AssistantToolOutput[] = [];
+
+  // Keep writes deterministic and allow duplicate checks to observe any earlier
+  // write from the same model step.
+  for (const call of calls) {
+    outputs.push(await executor(call, { accessToken, userId }));
+  }
 
   if (
     !outputs.every(isAssistantToolOutput) ||

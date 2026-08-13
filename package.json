@@ -18,6 +18,7 @@
     "test:projects": "tsx --test tests/project-domain.test.mjs",
     "test:project-persistence": "tsx --test tests/project-persistence.test.mjs",
     "test:project-tools": "tsx --test tests/project-assistant-tools.test.mjs",
+    "test:project-write-tools": "tsx --test tests/project-assistant-write-tools.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint"
   },
