@@ -153,6 +153,32 @@ test('comprehensive Project context returns current facts without raw transcript
   assert.doesNotMatch(JSON.stringify(output), /Private raw transcript text|knowledge-old|decision-old/);
 });
 
+test('Project context returns the newly completed work session as the most recent session', async () => {
+  const projectSeed = seed();
+  projectSeed.workSessions.push({
+    createdAt: '2026-08-21T07:19:51.817Z',
+    endedAt: '2026-08-21T07:19:51.817Z',
+    id: 'session-newest',
+    projectId: PROJECT_ID,
+    startedAt: '2026-08-21T07:18:06.218Z',
+    summary: 'Compared smaller manufacturer minimum-order options.',
+    title: 'Manufacturer minimums',
+    updatedAt: '2026-08-21T07:19:51.817Z',
+  });
+  const execute = executorFor({ [USER_ID]: projectSeed });
+  const output = await execute(
+    call('get_project_context', { focus: 'history', projectId: PROJECT_ID }),
+    { accessToken: ACCESS_TOKEN, userId: USER_ID },
+  );
+
+  assert.equal(output.result.status, 'success');
+  assert.equal(output.result.recentWorkSessions[0].id, 'session-newest');
+  assert.equal(
+    output.result.recentWorkSessions[0].summary,
+    'Compared smaller manufacturer minimum-order options.',
+  );
+});
+
 test('Project context bounds large sections and reports truncation', async () => {
   const manyTasks = Array.from({ length: 24 }, (_, index) => ({
     createdAt: CREATED_AT, id: `task-${index}`, position: index, priority: 'normal',
@@ -222,6 +248,109 @@ test('server tool loop can list then retrieve a Project before Tina answers', as
   assert.match(requests[1].input.at(-1).output, /AQAL Collective/);
   assert.match(requests[2].input.at(-1).output, /Finish homepage copy/);
   assert.doesNotMatch(JSON.stringify(requests), /Private raw transcript text|verified-project-token/);
+});
+
+test('a descriptive clothing-brand reference resolves one clear Project before answering', async () => {
+  const clothingSeed = seed();
+  clothingSeed.projects = [project({
+    description: 'Build AQAL Collective as a linen clothing brand.',
+    goal: 'Launch the first clothing collection.',
+    type: 'business',
+  })];
+  clothingSeed.decisions = [{
+    createdAt: CREATED_AT,
+    decidedAt: CREATED_AT,
+    id: 'decision-linen',
+    projectId: PROJECT_ID,
+    statement: 'Use linen for the first collection.',
+    status: 'active',
+    updatedAt: UPDATED_AT,
+  }];
+  const requests = [];
+  const executedNames = [];
+  const executeReadTool = executorFor({ [USER_ID]: clothingSeed });
+  const responses = [
+    projectToolResponse('list_projects', { includeArchived: false }, 'list-clothing'),
+    projectToolResponse('get_project_context', { focus: 'knowledge', projectId: PROJECT_ID }, 'context-clothing'),
+    openAIResponse([{ content: [{
+      text: 'AQAL? I like the direction it is taking. Linen gives the first collection a clear identity.',
+      type: 'output_text',
+    }], type: 'message' }]),
+  ];
+  const response = await handleAssistantRequest(assistantRequest({
+    ...BASE_REQUEST,
+    messages: [{ content: 'What do you think of the clothing brand I am working on?', role: 'user' }],
+  }), {
+    allowedOrigin: 'https://example.com',
+    apiKey: 'test-key',
+    executeServerTool: async (toolCall, context) => {
+      executedNames.push(toolCall.name);
+      return executeReadTool(toolCall, context);
+    },
+    fetchImplementation: async (_url, init) => {
+      requests.push(JSON.parse(String(init.body)));
+      return responses.shift();
+    },
+    verifyAccessToken: verifyToken,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    (await response.json()).content,
+    'AQAL? I like the direction it is taking. Linen gives the first collection a clear identity.',
+  );
+  assert.deepEqual(executedNames, ['list_projects', 'get_project_context']);
+  assert.match(requests[1].input.at(-1).output, /linen clothing brand/);
+  assert.match(requests[2].input.at(-1).output, /Use linen for the first collection/);
+  assert.equal(executedNames.some((name) =>
+    ['create_project', 'update_project', 'manage_project_work', 'record_project_truth'].includes(name)), false);
+});
+
+test('an ambiguous descriptive reference stops after bounded identities and asks naturally', async () => {
+  const ambiguousSeed = {
+    projects: [
+      project({ description: 'Develop the AQAL clothing brand.', type: 'business' }),
+      project({
+        description: 'Explore a second independent clothing label.',
+        id: 'project-second-label',
+        name: 'Second Label',
+        type: 'business',
+        updatedAt: '2026-08-14T12:00:00.000Z',
+      }),
+    ],
+  };
+  const executedNames = [];
+  const requests = [];
+  const executeReadTool = executorFor({ [USER_ID]: ambiguousSeed });
+  const responses = [
+    projectToolResponse('list_projects', { includeArchived: false }, 'list-ambiguous'),
+    openAIResponse([{ content: [{
+      text: 'Do you mean AQAL Collective or Second Label?',
+      type: 'output_text',
+    }], type: 'message' }]),
+  ];
+  const response = await handleAssistantRequest(assistantRequest({
+    ...BASE_REQUEST,
+    messages: [{ content: 'What do you think of the clothing brand I am working on?', role: 'user' }],
+  }), {
+    allowedOrigin: 'https://example.com',
+    apiKey: 'test-key',
+    executeServerTool: async (toolCall, context) => {
+      executedNames.push(toolCall.name);
+      return executeReadTool(toolCall, context);
+    },
+    fetchImplementation: async (_url, init) => {
+      requests.push(JSON.parse(String(init.body)));
+      return responses.shift();
+    },
+    verifyAccessToken: verifyToken,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).content, 'Do you mean AQAL Collective or Second Label?');
+  assert.deepEqual(executedNames, ['list_projects']);
+  assert.match(requests[1].input.at(-1).output, /AQAL Collective/);
+  assert.match(requests[1].input.at(-1).output, /Second Label/);
 });
 
 test('unrelated completed answers do not execute Project tools', async () => {

@@ -68,6 +68,7 @@ export type ProjectTask = {
   createdAt: ISODateTime;
   deliverableId?: ProjectEntityId;
   description?: string;
+  derivedIdentity?: string;
   dueDate?: ISODate;
   id: ProjectEntityId;
   milestoneId?: ProjectEntityId;
@@ -99,6 +100,7 @@ export type ProjectKnowledgeStatus =
 export type ProjectKnowledgeItem = {
   content: string;
   createdAt: ISODateTime;
+  derivedIdentity?: string;
   id: ProjectEntityId;
   kind: ProjectKnowledgeKind;
   projectId: ProjectId;
@@ -114,6 +116,7 @@ export type ProjectKnowledgeItem = {
 export type ProjectDecision = {
   createdAt: ISODateTime;
   decidedAt: ISODateTime;
+  derivedIdentity?: string;
   id: ProjectEntityId;
   projectId: ProjectId;
   rationale?: string;
@@ -129,6 +132,7 @@ export type ProjectWorkSession = {
   endedAt?: ISODateTime;
   id: ProjectEntityId;
   projectId: ProjectId;
+  sourceConversationId?: string;
   startedAt: ISODateTime;
   summary?: string;
   title?: string;
@@ -198,4 +202,3 @@ export type MeaningfulProjectOperation<T> = {
   changeEvent: ProjectChangeEvent;
   value: T;
 };
-

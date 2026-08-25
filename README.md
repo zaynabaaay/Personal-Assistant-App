@@ -81,6 +81,83 @@ records, while replacing accepted knowledge or an active decision requires a
 confirmed replacement. The Project service suppresses obvious exact duplicates
 and preserves superseded records through the existing atomic domain operations.
 
+## Conversation History
+
+Home conversations are durable unfinished drafts. Each sent user message and
+assistant reply is appended promptly through an authenticated, idempotent RPC;
+the owner has at most one active draft, and the app restores its ordered messages
+and original timestamps after sign-in or restart. A small owner-scoped local
+outbox preserves a message when a network response is interrupted so saving can
+be retried without duplicating it.
+
+Choosing **Finish** atomically moves that active draft and its messages into the
+completed-conversation tables. The active Home transcript is cleared only after
+the completed transcript is read back and verified. A fresh empty draft remains
+in memory and is created in storage lazily when its first message is sent.
+
+Completed conversations are available from the minimal History route. RLS limits
+both `completed_conversations` and `conversation_messages` to `auth.uid()`, and
+the completion RPC derives ownership from that verified identity rather than a
+client-provided user ID. The conversation ID is the idempotency key: an exact
+retry succeeds without duplicate rows, while reuse with a different transcript
+is rejected. A deterministic date/time title and message-count summary are used
+when generated metadata is unavailable.
+
+Authenticated assistant recall uses a read-only, owner-scoped full-text search
+over completed messages. The server expands a small set of common related terms,
+then PostgreSQL ranks matches and returns at most four conversations with three
+nearby, bounded message excerpts each. Search results remain historical evidence;
+they are never promoted automatically into current Project truth.
+
+After the completed transcript is safe, the client calls the authenticated
+`/api/process-conversation` function. This second lifecycle matches bounded
+message segments only to existing Projects, retrieves each matched Project's
+current truth, and stores one summary-only work session per Project. Unrelated
+segments and raw transcript entries are not copied into Project storage.
+
+The processing plan is saved once. Each matched Project has its own checkpoint,
+and its Project changes, pending candidates, and checkpoint completion are
+committed in one transaction with deterministic IDs. A retry skips completed
+Project checkpoints and safely resumes failed ones. Potential changes expressed
+as brainstorming or ambiguous language can be retained as lightweight pending
+candidates without changing current Project truth.
+
+## General memory
+
+General memory is a small structured layer beside raw History and explicit
+Projects. `general_memories` stores owner-scoped durable memory (preferences,
+goals, constraints, and useful background) and changing current-state memory
+(temporary facts, plans, commitments, and inventory-like state). It does not
+write Project tables and does not replace the original conversation evidence.
+
+Each durably saved user message starts bounded memory extraction in parallel
+with the assistant response. Processing reads only that message, up to six
+nearby turns, and at most twelve relevant existing memories. Restore and Finish
+retry interrupted processing; an owner/message checkpoint makes retries
+idempotent and avoids repeatedly analyzing the whole transcript. Finish remains
+safe if memory processing is temporarily unavailable.
+
+The analyzer can promote, repeat, supersede, record a contextual exception,
+coexist with compatible detail, retain an ambiguous candidate, or leave a turn
+in History only. Repeated evidence refreshes an existing record. Superseded
+records retain bidirectional replacement links, and every structured memory
+keeps source conversation/message references. Explicit user statements and
+decisions have stronger provenance than inference; inferred confidence is
+capped.
+
+Current-state records may have `valid_until` or `stale_after` timestamps when
+the conversation supports them. Search computes effective `current`, `stale`,
+or `expired` status at read time rather than imposing fixed expirations by
+category. The assistant normally searches current structured memory directly,
+uses Projects as the authority for Project-specific truth, and falls back to
+the existing completed-conversation evidence search for historical recall or
+when structured memory is insufficient.
+
+Apply `20260821180000_create_general_memory.sql` after the existing conversation
+migrations. Its RLS policies and RPCs derive ownership from `auth.uid()`, deny
+anonymous access, and use the authenticated publishable-key client rather than
+a service-role bypass.
+
 ## Deploy to GitHub Pages
 
 ```bash

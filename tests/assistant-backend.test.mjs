@@ -17,6 +17,7 @@ import {
   ASSISTANT_CLIENT_ID,
 } from '../src/contracts/assistant/assistant-contract.ts';
 import { InvalidAccessTokenError } from '../src/server/auth/supabase-token-verifier.ts';
+import { normalizeAssistantPlainText } from '../src/server/assistant/openai-assistant-provider.ts';
 
 const ALLOWED_ORIGIN = 'https://example.com';
 const TEST_ACCESS_TOKEN = 'test-supabase-access-token';
@@ -144,6 +145,13 @@ function nativeAssistantRequest(body, headers = {}) {
   });
 }
 
+test('normal assistant output is normalized to clean plain text for the mobile client', () => {
+  assert.equal(
+    normalizeAssistantPlainText('### AQAL\n**Status:** active\n- Linen is confirmed.\n`Next step`'),
+    'AQAL\nStatus: active\n• Linen is confirmed.\nNext step',
+  );
+});
+
 test('normal chat reaches OpenAI with the existing conversation and safe settings', async () => {
   let openAIRequest;
   const response = await handleAssistantRequest(assistantRequest(BASE_REQUEST), {
@@ -163,6 +171,13 @@ test('normal chat reaches OpenAI with the existing conversation and safe setting
   assert.deepEqual(openAIRequest.input, BASE_REQUEST.messages);
   assert.equal(openAIRequest.store, false);
   assert.match(openAIRequest.instructions, /America\/Toronto/);
+  assert.match(openAIRequest.instructions, /Synthesize tool results into natural sentences/);
+  assert.match(openAIRequest.instructions, /Never emit Markdown syntax/);
+  assert.match(openAIRequest.instructions, /Answer the user’s actual question first/);
+  assert.match(openAIRequest.instructions, /explicitly names something as a Project/);
+  assert.match(openAIRequest.instructions, /Do not say “if this is a Project”/);
+  assert.match(openAIRequest.instructions, /prioritize the first item in recentWorkSessions/);
+  assert.doesNotMatch(openAIRequest.instructions, /respond like a database report/i);
   assert.equal(openAIRequest.tool_choice, 'auto');
   assert.deepEqual(
     openAIRequest.tools.map((tool) => tool.name),
@@ -171,6 +186,8 @@ test('normal chat reaches OpenAI with the existing conversation and safe setting
       'get_tomorrow_calendar_events',
       'get_next_calendar_event',
       'get_calendar_events_in_range',
+      'search_completed_conversations',
+      'search_general_memory',
       'list_projects',
       'get_project_context',
       'create_project',

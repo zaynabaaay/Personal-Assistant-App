@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { type Href, useRouter } from 'expo-router';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -12,24 +13,37 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import type { ActiveConversation, ConversationMessage } from '@/domain/conversations';
+import { useAuth } from '@/features/auth/auth-provider';
 import { assistantService } from '@/services/assistant/assistant-service';
+import {
+  activeConversationOutbox,
+  conversationService,
+  createActiveConversation,
+  createConversationMessageId,
+  finishConversationLifecycle,
+  processCompletedConversation,
+} from '@/services/conversations';
+import { processConversationMemory } from '@/services/memory';
 
+import {
+  MESSAGE_INPUT_MAX_HEIGHT,
+  MESSAGE_INPUT_MIN_HEIGHT,
+  messageInputHeight,
+  messageInputScrollEnabled,
+} from './message-composer-layout';
 import { useVisibleViewport } from './use-visible-viewport';
 
-type Message = {
-  id: number;
-  role: 'user' | 'assistant';
-  text: string;
-};
-
 type HomeHeaderProps = {
-  onClear: () => void;
-  showClear: boolean;
+  onFinish: () => void;
+  onOpenChats: () => void;
+  isFinishing: boolean;
+  showFinish: boolean;
 };
 
 type ConversationProps = {
   isResponding: boolean;
-  messages: Message[];
+  messages: ConversationMessage[];
 };
 
 type MessageComposerProps = {
@@ -46,8 +60,6 @@ type MessageComposerProps = {
   onToggleListening: () => void;
 };
 
-const INPUT_MIN_HEIGHT = 39;
-const INPUT_MAX_HEIGHT = 108;
 const MICROPHONE_ACTIVE_COLOR = '#8B5E52';
 const KEYBOARD_AVOIDING_BEHAVIOR =
   Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined;
@@ -74,7 +86,12 @@ function useCurrentDate() {
   return now;
 }
 
-function HomeHeader({ onClear, showClear }: HomeHeaderProps) {
+function HomeHeader({
+  isFinishing,
+  onFinish,
+  onOpenChats,
+  showFinish,
+}: HomeHeaderProps) {
   const now = useCurrentDate();
 
   return (
@@ -88,28 +105,41 @@ function HomeHeader({ onClear, showClear }: HomeHeaderProps) {
         </Text>
       </View>
 
-      {showClear ? (
+      <View style={styles.headerActions}>
         <Pressable
-          accessibilityLabel="Clear conversation"
+          accessibilityLabel="Open saved chats"
           accessibilityRole="button"
-          hitSlop={12}
-          onPress={onClear}
-          style={({ pressed }) => [styles.clearButton, pressed && styles.pressed]}
+          hitSlop={10}
+          onPress={onOpenChats}
+          style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
         >
-          <Text style={styles.clearText}>Clear</Text>
+          <Text style={styles.headerButtonText}>Chats</Text>
         </Pressable>
-      ) : null}
+
+        {showFinish ? (
+          <Pressable
+            accessibilityLabel="Finish conversation"
+            accessibilityRole="button"
+            disabled={isFinishing}
+            hitSlop={10}
+            onPress={onFinish}
+            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.finishText}>{isFinishing ? 'Saving…' : 'Finish'}</Text>
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
 
-function MessageItem({ message }: { message: Message }) {
+function MessageItem({ message }: { message: ConversationMessage }) {
   const isUser = message.role === 'user';
 
   return (
     <View style={isUser ? styles.userMessage : styles.assistantMessage}>
       <Text style={isUser ? styles.userMessageText : styles.assistantMessageText}>
-        {message.text}
+        {message.content}
       </Text>
     </View>
   );
@@ -173,27 +203,40 @@ function MessageComposer({
       {isListening ? <Text style={styles.listeningLabel}>Listening…</Text> : null}
 
       <View style={[styles.composer, isFocused && styles.composerFocused]}>
-        <TextInput
-          accessibilityLabel="Message"
-          maxLength={1000}
-          multiline
-          onBlur={onBlur}
-          onChangeText={onChangeText}
-          onContentSizeChange={({ nativeEvent }) =>
-            onInputHeightChange(nativeEvent.contentSize.height)
-          }
-          onFocus={onFocus}
-          placeholder={isListening ? 'Listening…' : 'Ask anything…'}
-          placeholderTextColor="#8B8983"
-          returnKeyType="default"
-          scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
-          style={[
-            styles.input,
-            Platform.OS === 'web' && styles.inputWeb,
-            { height: inputHeight },
-          ]}
-          value={draft}
-        />
+        <View style={styles.inputFrame}>
+          <Text
+            accessibilityElementsHidden
+            accessible={false}
+            importantForAccessibility="no-hide-descendants"
+            onLayout={({ nativeEvent }) => onInputHeightChange(nativeEvent.layout.height)}
+            pointerEvents="none"
+            style={styles.inputSizer}
+          >
+            {draft || ' '}
+          </Text>
+          <TextInput
+            accessibilityLabel="Message"
+            maxLength={1000}
+            multiline
+            onBlur={onBlur}
+            onChangeText={(text) => {
+              onChangeText(text);
+              if (text.length === 0) onInputHeightChange(MESSAGE_INPUT_MIN_HEIGHT);
+            }}
+            onFocus={onFocus}
+            placeholder={isListening ? 'Listening…' : 'Ask anything…'}
+            placeholderTextColor="#8B8983"
+            returnKeyType="default"
+            scrollEnabled={messageInputScrollEnabled(inputHeight)}
+            style={[
+              styles.input,
+              Platform.OS === 'web' && styles.inputWeb,
+              { height: inputHeight },
+            ]}
+            testID="message-input"
+            value={draft}
+          />
+        </View>
 
         <Pressable
           accessibilityLabel={isListening ? 'Stop listening' : 'Start voice input'}
@@ -228,46 +271,218 @@ function MessageComposer({
 }
 
 export default function HomeScreen() {
+  const { user } = useAuth();
+  const router = useRouter();
   const visibleViewport = useVisibleViewport();
   const [draft, setDraft] = useState('');
-  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
+  const [inputHeight, setInputHeight] = useState(MESSAGE_INPUT_MIN_HEIGHT);
   const [isFocused, setIsFocused] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const nextMessageId = useRef(1);
+  const [isFinishing, setIsFinishing] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(true);
+  const [isSavingMessage, setIsSavingMessage] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const [pendingPersistenceKind, setPendingPersistenceKind] =
+    useState<'assistant' | 'user' | null>(null);
+  const [pendingUserMessage, setPendingUserMessage] = useState<ConversationMessage | null>(null);
+  const [completionNotice, setCompletionNotice] = useState<string | null>(null);
+  const [activeConversation, setActiveConversation] = useState<ActiveConversation>(() =>
+    createActiveConversation()
+  );
   const activeRequestId = useRef(0);
-  const canSend = draft.trim().length > 0 && !isResponding;
+  const messages = activeConversation.messages;
+  const canSend = draft.trim().length > 0 && !isResponding && !isFinishing &&
+    !isRestoring && !isSavingMessage;
 
-  useEffect(() => () => assistantService.cancelRequest(), []);
+  useEffect(() => {
+    let mounted = true;
+    const userId = user?.id;
+    assistantService.resetSession();
+
+    const restoreConversation = async () => {
+      // Defer state synchronization until after the effect has subscribed. This
+      // also lets cleanup cancel an obsolete account restore before it renders.
+      await Promise.resolve();
+      if (!mounted) return;
+      setIsRestoring(true);
+      setPersistenceError(null);
+      setPendingPersistenceKind(null);
+      setPendingUserMessage(null);
+      setDraft('');
+
+      if (!userId) {
+        setActiveConversation(createActiveConversation());
+        setIsRestoring(false);
+        return;
+      }
+
+      try {
+        const [stored, pending] = await Promise.all([
+          conversationService.getActiveConversation(),
+          activeConversationOutbox.load(userId),
+        ]);
+        if (!mounted) return;
+        if (!pending) {
+          setActiveConversation(stored ?? createActiveConversation());
+          // A no-preference drain also discovers unfinished completed
+          // conversations after a prior bounded Finish drain exhausted itself.
+          void processConversationMemory(stored?.id).catch(() => undefined);
+          return;
+        }
+
+        try {
+          const restored = await conversationService.saveActiveConversation(pending);
+          await activeConversationOutbox.clear(userId);
+          if (mounted) {
+            setActiveConversation(restored);
+            void processConversationMemory(restored.id).catch(() => undefined);
+          }
+        } catch {
+          const latest = await conversationService.getActiveConversation().catch(() => stored);
+          if (!mounted) return;
+          setActiveConversation(latest ?? createActiveConversation());
+          const firstUnsaved = pending.messages[(latest?.messages.length ?? 0)];
+          if (firstUnsaved?.role === 'user') {
+            setDraft(firstUnsaved.content);
+            setPendingUserMessage(firstUnsaved);
+            setPendingPersistenceKind('user');
+          } else {
+            setPendingPersistenceKind('assistant');
+          }
+          setPersistenceError(
+            'Conversation saving was interrupted. Your pending message is preserved for retry.',
+          );
+        }
+      } catch {
+        if (mounted) {
+          setPersistenceError('The saved conversation could not be restored. Please try again.');
+        }
+      } finally {
+        if (mounted) setIsRestoring(false);
+      }
+    };
+
+    void restoreConversation();
+
+    return () => {
+      mounted = false;
+      assistantService.cancelRequest();
+    };
+  }, [user?.id]);
 
   const resetComposer = () => {
     setDraft('');
-    setInputHeight(INPUT_MIN_HEIGHT);
+    setInputHeight(MESSAGE_INPUT_MIN_HEIGHT);
     setIsListening(false);
+  };
+
+  const persistActiveConversation = async (conversation: ActiveConversation) => {
+    if (!user?.id) throw new Error('Authentication is required.');
+    await activeConversationOutbox.save(user.id, conversation);
+    const persisted = await conversationService.saveActiveConversation(conversation);
+    await activeConversationOutbox.clear(user.id);
+    return persisted;
+  };
+
+  const persistAssistantReply = async (
+    conversation: ActiveConversation,
+    reply: ConversationMessage,
+  ) => {
+    const next = {
+      ...conversation,
+      messages: [...conversation.messages, reply],
+      revision: conversation.messages.length + 1,
+      updatedAt: reply.occurredAt,
+    };
+    setPendingPersistenceKind('assistant');
+    try {
+      const persisted = await persistActiveConversation(next);
+      setActiveConversation(persisted);
+      setPersistenceError(null);
+      setPendingPersistenceKind(null);
+    } catch {
+      setPersistenceError(
+        'Tina replied, but saving was interrupted. The reply is preserved; retry saving.',
+      );
+    }
   };
 
   const sendMessage = async () => {
     const text = draft.trim();
 
-    if (!text || isResponding) {
+    if (!text || isResponding || isSavingMessage || isRestoring || !user?.id) {
       return;
     }
 
-    const userMessage: Message = {
-      id: nextMessageId.current++,
+    const occurredAt = pendingUserMessage?.content === text &&
+      pendingUserMessage.conversationId === activeConversation.id
+      ? pendingUserMessage.occurredAt
+      : new Date().toISOString();
+    const userMessage: ConversationMessage = {
+      content: text,
+      conversationId: activeConversation.id,
+      id: pendingUserMessage?.content === text &&
+        pendingUserMessage.conversationId === activeConversation.id
+        ? pendingUserMessage.id
+        : createConversationMessageId(activeConversation.id),
+      occurredAt,
+      position: messages.length,
       role: 'user',
-      text,
     };
-    const conversation = [...messages, userMessage];
+    const nextConversation: ActiveConversation = {
+      ...activeConversation,
+      messages: [...messages, userMessage],
+      revision: messages.length + 1,
+      updatedAt: occurredAt,
+    };
     const requestId = ++activeRequestId.current;
 
-    setMessages(conversation);
+    setIsSavingMessage(true);
+    setPendingPersistenceKind('user');
+    setFinishError(null);
+    setCompletionNotice(null);
+    setPersistenceError(null);
+
+    let persistedUserConversation: ActiveConversation;
+    try {
+      persistedUserConversation = await persistActiveConversation(nextConversation);
+    } catch {
+      const latest = await conversationService.getActiveConversation().catch(() => null);
+      const savedMessage = latest?.messages.find((message) => message.id === userMessage.id);
+      if (latest?.id === activeConversation.id && savedMessage?.content === userMessage.content) {
+        persistedUserConversation = latest;
+        await activeConversationOutbox.clear(user.id).catch(() => undefined);
+      } else {
+        if (latest?.id === activeConversation.id) setActiveConversation(latest);
+        setPendingUserMessage(userMessage);
+        setPersistenceError('Message was not saved. It is preserved; tap Send to retry.');
+        setIsSavingMessage(false);
+        return;
+      }
+    }
+
+    setActiveConversation(persistedUserConversation);
+    setPendingUserMessage(null);
+    setPendingPersistenceKind(null);
     resetComposer();
+    setIsSavingMessage(false);
+
+    // Memory extraction is independent of response generation. The message is
+    // already durable, so a failure here can be retried on restore or Finish.
+    void processConversationMemory(persistedUserConversation.id).catch(() => undefined);
+
+    if (persistedUserConversation.messages.at(-1)?.id !== userMessage.id) {
+      return;
+    }
     setIsResponding(true);
 
     const result = await assistantService.respond(
-      conversation.map((message) => ({ content: message.text, role: message.role })),
+      persistedUserConversation.messages.map((message) => ({
+        content: message.content,
+        role: message.role,
+      })),
     );
 
     if (activeRequestId.current !== requestId) {
@@ -275,27 +490,85 @@ export default function HomeScreen() {
     }
 
     if (result.status === 'success') {
-      setMessages((current) => [
-        ...current,
-        {
-          id: nextMessageId.current++,
-          role: result.message.role,
-          text: result.message.content,
-        },
-      ]);
+      const reply: ConversationMessage = {
+        content: result.message.content,
+        conversationId: persistedUserConversation.id,
+        id: createConversationMessageId(persistedUserConversation.id),
+        occurredAt: new Date().toISOString(),
+        position: persistedUserConversation.messages.length,
+        role: result.message.role,
+      };
+      await persistAssistantReply(persistedUserConversation, reply);
     }
 
     setIsResponding(false);
   };
 
-  const clearConversation = () => {
+  const resetActiveConversation = () => {
     activeRequestId.current += 1;
     assistantService.resetSession();
-    setMessages([]);
+    setActiveConversation(createActiveConversation());
+    setPendingUserMessage(null);
+    setPendingPersistenceKind(null);
+    setPersistenceError(null);
+    if (user?.id) void activeConversationOutbox.clear(user.id);
     resetComposer();
     setIsFocused(false);
     setIsResponding(false);
     Keyboard.dismiss();
+  };
+
+  const retryPendingPersistence = async () => {
+    if (!user?.id || isSavingMessage) return;
+    setIsSavingMessage(true);
+    try {
+      const pending = await activeConversationOutbox.load(user.id);
+      if (!pending) throw new Error('No pending conversation was found.');
+      const persisted = await conversationService.saveActiveConversation(pending);
+      await activeConversationOutbox.clear(user.id);
+      setActiveConversation(persisted);
+      setPersistenceError(null);
+      setPendingPersistenceKind(null);
+    } catch {
+      setPersistenceError('Conversation saving is still unavailable. Your pending reply is preserved.');
+    } finally {
+      setIsSavingMessage(false);
+    }
+  };
+
+  const finishConversation = async () => {
+    if (
+      messages.length === 0 || isResponding || isFinishing || isSavingMessage ||
+      isRestoring || persistenceError
+    ) return;
+
+    setIsFinishing(true);
+    setFinishError(null);
+    setCompletionNotice(null);
+
+    try {
+      const result = await finishConversationLifecycle({
+        active: activeConversation,
+        onPersisted: () => setCompletionNotice('Conversation saved to Chats.'),
+        process: processCompletedConversation,
+        processMemory: processConversationMemory,
+        reset: resetActiveConversation,
+        service: conversationService,
+      });
+      if (result.processingStatus === 'processing') {
+        setCompletionNotice(
+          'Conversation saved to Chats. Project organization is still in progress.',
+        );
+      } else if (result.processingStatus === 'failed') {
+        setCompletionNotice(
+          'Conversation saved to Chats. Project organization could not finish yet and can be retried.',
+        );
+      }
+    } catch {
+      setFinishError('Conversation could not be saved. Nothing was cleared; please try again.');
+    } finally {
+      setIsFinishing(false);
+    }
   };
 
   const toggleListening = () => {
@@ -313,7 +586,45 @@ export default function HomeScreen() {
       testID="home-screen"
     >
       <KeyboardAvoidingView behavior={KEYBOARD_AVOIDING_BEHAVIOR} style={styles.keyboardView}>
-        <HomeHeader onClear={clearConversation} showClear={messages.length > 0} />
+        <HomeHeader
+          isFinishing={isFinishing}
+          onFinish={finishConversation}
+          onOpenChats={() => router.push('/history' as Href)}
+          showFinish={messages.length > 0 && !isResponding && !isSavingMessage &&
+            !isRestoring && !persistenceError}
+        />
+        {finishError ? (
+          <Text accessibilityLiveRegion="assertive" style={styles.finishError}>
+            {finishError}
+          </Text>
+        ) : null}
+        {completionNotice ? (
+          <Text accessibilityLiveRegion="polite" style={styles.completionNotice}>
+            {completionNotice}
+          </Text>
+        ) : null}
+        {isRestoring ? (
+          <Text accessibilityLiveRegion="polite" style={styles.completionNotice}>
+            Restoring conversation…
+          </Text>
+        ) : null}
+        {persistenceError ? (
+          <View style={styles.persistenceNotice}>
+            <Text accessibilityLiveRegion="assertive" style={styles.finishError}>
+              {persistenceError}
+            </Text>
+            {pendingPersistenceKind === 'assistant' ? (
+              <Pressable
+                accessibilityLabel="Retry saving conversation"
+                accessibilityRole="button"
+                disabled={isSavingMessage}
+                onPress={retryPendingPersistence}
+              >
+                <Text style={styles.retryText}>{isSavingMessage ? 'Retrying…' : 'Retry saving'}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         <Conversation isResponding={isResponding} messages={messages} />
         <MessageComposer
           canSend={canSend}
@@ -327,11 +638,7 @@ export default function HomeScreen() {
             setIsFocused(true);
             setIsListening(false);
           }}
-          onInputHeightChange={(height) =>
-            setInputHeight(
-              Math.min(INPUT_MAX_HEIGHT, Math.max(INPUT_MIN_HEIGHT, Math.ceil(height))),
-            )
-          }
+          onInputHeightChange={(height) => setInputHeight(messageInputHeight(height))}
           onSend={sendMessage}
           onToggleListening={toggleListening}
         />
@@ -374,14 +681,47 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
     marginTop: 5,
   },
-  clearButton: {
-    paddingHorizontal: 2,
+  headerActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 14,
+  },
+  headerButton: {
+    paddingHorizontal: 1,
     paddingVertical: 7,
   },
-  clearText: {
+  headerButtonText: {
     color: '#908D85',
     fontSize: 12,
     letterSpacing: 0.1,
+  },
+  finishText: {
+    color: '#625D55',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.1,
+  },
+  finishError: {
+    color: '#8B5E52',
+    fontSize: 12,
+    marginHorizontal: 30,
+    marginTop: 16,
+  },
+  completionNotice: {
+    color: '#65705D',
+    fontSize: 12,
+    marginHorizontal: 30,
+    marginTop: 16,
+  },
+  persistenceNotice: {
+    alignItems: 'flex-start',
+  },
+  retryText: {
+    color: '#625D55',
+    fontSize: 12,
+    fontWeight: '600',
+    marginHorizontal: 30,
+    marginTop: 8,
   },
   conversation: {
     flex: 1,
@@ -449,17 +789,37 @@ const styles = StyleSheet.create({
   },
   input: {
     color: '#33312D',
-    flex: 1,
     fontSize: 15,
     lineHeight: 21,
-    maxHeight: INPUT_MAX_HEIGHT,
-    minHeight: INPUT_MIN_HEIGHT,
+    maxHeight: MESSAGE_INPUT_MAX_HEIGHT,
+    minHeight: MESSAGE_INPUT_MIN_HEIGHT,
     outlineColor: 'transparent',
     outlineStyle: 'solid',
     outlineWidth: 0,
+    paddingBottom: 8,
+    paddingLeft: 0,
     paddingRight: 8,
     paddingTop: 8,
     textAlignVertical: 'top',
+    width: '100%',
+  },
+  inputFrame: {
+    flex: 1,
+    minWidth: 0,
+    position: 'relative',
+  },
+  inputSizer: {
+    fontSize: 15,
+    left: 0,
+    lineHeight: 21,
+    opacity: 0,
+    paddingBottom: 8,
+    paddingLeft: 0,
+    paddingRight: 8,
+    paddingTop: 8,
+    position: 'absolute',
+    right: 0,
+    top: 0,
   },
   inputWeb: {
     fontSize: 16,

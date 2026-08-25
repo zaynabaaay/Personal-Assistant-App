@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.zaynabaaay.personalassistant",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +24,11 @@
       "blockedPermissions": [
         "android.permission.WRITE_CALENDAR"
       ],
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -55,7 +62,8 @@
     "extra": {
       "eas": {
         "projectId": "6298135d-7aa1-43c0-8b2d-11fd29d572b6"
-      }
+      },
+      "router": {}
     }
   }
 }

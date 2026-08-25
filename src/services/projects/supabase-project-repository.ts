@@ -118,6 +118,7 @@ function toTask(row: DatabaseRow): ProjectTask {
     ...optionalField('completedAt', optionalString(row.completed_at)),
     ...optionalField('deliverableId', optionalString(row.deliverable_id)),
     ...optionalField('description', optionalString(row.description)),
+    ...optionalField('derivedIdentity', optionalString(row.derived_identity)),
     ...optionalField('dueDate', optionalString(row.due_date)),
     ...optionalField('milestoneId', optionalString(row.milestone_id)),
     ...optionalField('parentTaskId', optionalString(row.parent_task_id)),
@@ -134,6 +135,7 @@ function toKnowledgeItem(row: DatabaseRow): ProjectKnowledgeItem {
   return {
     ...baseProjectEntity(row),
     content: requiredString(row, 'content'),
+    ...optionalField('derivedIdentity', optionalString(row.derived_identity)),
     kind: requiredString(row, 'kind') as ProjectKnowledgeItem['kind'],
     ...optionalField('resolution', optionalString(row.resolution)),
     ...optionalField('resolvedAt', optionalString(row.resolved_at)),
@@ -151,6 +153,7 @@ function toDecision(row: DatabaseRow): ProjectDecision {
   return {
     ...baseProjectEntity(row),
     decidedAt: requiredString(row, 'decided_at'),
+    ...optionalField('derivedIdentity', optionalString(row.derived_identity)),
     ...optionalField('rationale', optionalString(row.rationale)),
     ...optionalField('sourceSessionId', optionalString(row.source_session_id)),
     statement: requiredString(row, 'statement'),
@@ -163,6 +166,7 @@ function toWorkSession(row: DatabaseRow): ProjectWorkSession {
   return {
     ...baseProjectEntity(row),
     ...optionalField('endedAt', optionalString(row.ended_at)),
+    ...optionalField('sourceConversationId', optionalString(row.source_conversation_id)),
     startedAt: requiredString(row, 'started_at'),
     ...optionalField('summary', optionalString(row.summary)),
     ...optionalField('title', optionalString(row.title)),
@@ -237,6 +241,7 @@ function deliverableRow(value: ProjectDeliverable) {
 function taskRow(value: ProjectTask) {
   return { completed_at: nullable(value.completedAt), created_at: value.createdAt,
     deliverable_id: nullable(value.deliverableId), description: nullable(value.description),
+    derived_identity: nullable(value.derivedIdentity),
     due_date: nullable(value.dueDate), id: value.id, milestone_id: nullable(value.milestoneId),
     parent_task_id: nullable(value.parentTaskId), position: value.position,
     priority: value.priority, project_id: value.projectId,
@@ -245,7 +250,8 @@ function taskRow(value: ProjectTask) {
 }
 
 function knowledgeRow(value: ProjectKnowledgeItem) {
-  return { content: value.content, created_at: value.createdAt, id: value.id, kind: value.kind,
+  return { content: value.content, created_at: value.createdAt,
+    derived_identity: nullable(value.derivedIdentity), id: value.id, kind: value.kind,
     project_id: value.projectId, resolution: nullable(value.resolution),
     resolved_at: nullable(value.resolvedAt), source_session_id: nullable(value.sourceSessionId),
     status: value.status, supersedes_knowledge_item_id: nullable(value.supersedesKnowledgeItemId),
@@ -253,7 +259,8 @@ function knowledgeRow(value: ProjectKnowledgeItem) {
 }
 
 function decisionRow(value: ProjectDecision) {
-  return { created_at: value.createdAt, decided_at: value.decidedAt, id: value.id,
+  return { created_at: value.createdAt, decided_at: value.decidedAt,
+    derived_identity: nullable(value.derivedIdentity), id: value.id,
     project_id: value.projectId, rationale: nullable(value.rationale),
     source_session_id: nullable(value.sourceSessionId), statement: value.statement,
     status: value.status, supersedes_decision_id: nullable(value.supersedesDecisionId),
@@ -262,7 +269,8 @@ function decisionRow(value: ProjectDecision) {
 
 function workSessionRow(value: ProjectWorkSession) {
   return { created_at: value.createdAt, ended_at: nullable(value.endedAt), id: value.id,
-    project_id: value.projectId, started_at: value.startedAt, summary: nullable(value.summary),
+    project_id: value.projectId, source_conversation_id: nullable(value.sourceConversationId),
+    started_at: value.startedAt, summary: nullable(value.summary),
     title: nullable(value.title), updated_at: value.updatedAt };
 }
 
@@ -285,6 +293,27 @@ function changeEventRow(value: ProjectChangeEvent) {
     entity_id: value.entityId, entity_type: value.entityType, event_type: value.eventType,
     id: value.id, occurred_at: value.occurredAt, project_id: value.projectId,
     source_session_id: nullable(value.sourceSessionId), summary: value.summary };
+}
+
+export function createConversationProjectChangesPayload(
+  changes: ProjectRepositoryChanges,
+) {
+  if ((changes.workSessionEntries?.length ?? 0) > 0) {
+    throw new Error('Conversation processing stores summaries, not raw session entries.');
+  }
+
+  return {
+    change_events: (changes.changeEvents ?? []).map(changeEventRow),
+    decisions: (changes.decisions ?? []).map(decisionRow),
+    deliverables: (changes.deliverables ?? []).map(deliverableRow),
+    knowledge_items: (changes.knowledgeItems ?? []).map(knowledgeRow),
+    milestones: (changes.milestones ?? []).map(milestoneRow),
+    projects: (changes.projects ?? []).map(projectRow),
+    resources: (changes.resources ?? []).map(resourceRow),
+    tasks: (changes.tasks ?? []).map(taskRow),
+    work_session_entries: [],
+    work_sessions: (changes.workSessions ?? []).map(workSessionRow),
+  };
 }
 
 export class SupabaseProjectRepository implements ProjectRepository {
@@ -310,18 +339,21 @@ export class SupabaseProjectRepository implements ProjectRepository {
   }
 
   private async list<T>(table: ProjectTable, column: string, value: string,
-    map: (row: DatabaseRow) => T, orders: string[] = []) {
+    map: (row: DatabaseRow) => T, orders: string[] = [], limit?: number,
+    ascending = true) {
     let query = this.getClient().from(table).select('*').eq(column, value);
     if (this.ownerId) query = query.eq('owner_id', this.ownerId);
-    for (const order of orders) query = query.order(order);
+    for (const order of orders) query = query.order(order, { ascending });
+    if (limit !== undefined) query = query.limit(limit);
     const { data, error } = await query;
     if (error) throw error;
     return (data ?? []).map((row) => map(row as DatabaseRow));
   }
 
-  private async listAll<T>(table: ProjectTable, map: (row: DatabaseRow) => T) {
+  private async listAll<T>(table: ProjectTable, map: (row: DatabaseRow) => T, limit?: number) {
     let query = this.getClient().from(table).select('*');
     if (this.ownerId) query = query.eq('owner_id', this.ownerId);
+    if (limit !== undefined) query = query.limit(limit);
     const { data, error } = await query;
     if (error) throw error;
     return (data ?? []).map((row) => map(row as DatabaseRow));
@@ -336,15 +368,15 @@ export class SupabaseProjectRepository implements ProjectRepository {
   async getTask(id: string) { return this.getOne('project_tasks', id, toTask); }
   async getWorkSession(id: string) { return this.getOne('project_work_sessions', id, toWorkSession); }
   async listChangeEvents(id: string) { return this.list('project_change_events', 'project_id', id, toChangeEvent, ['occurred_at', 'id']); }
-  async listDecisions(id: string) { return this.list('project_decisions', 'project_id', id, toDecision); }
+  async listDecisions(id: string, limit?: number) { return this.list('project_decisions', 'project_id', id, toDecision, limit === undefined ? [] : ['updated_at', 'id'], limit, false); }
   async listDeliverables(id: string) { return this.list('project_deliverables', 'project_id', id, toDeliverable, ['position', 'id']); }
-  async listKnowledgeItems(id: string) { return this.list('project_knowledge_items', 'project_id', id, toKnowledgeItem); }
+  async listKnowledgeItems(id: string, limit?: number) { return this.list('project_knowledge_items', 'project_id', id, toKnowledgeItem, limit === undefined ? [] : ['updated_at', 'id'], limit, false); }
   async listMilestones(id: string) { return this.list('project_milestones', 'project_id', id, toMilestone, ['position', 'id']); }
-  async listProjects() { return this.listAll('projects', toProject); }
+  async listProjects(limit?: number) { return this.listAll('projects', toProject, limit); }
   async listResources(id: string) { return this.list('project_resources', 'project_id', id, toResource); }
-  async listTasks(id: string) { return this.list('project_tasks', 'project_id', id, toTask, ['position', 'id']); }
+  async listTasks(id: string, limit?: number) { return this.list('project_tasks', 'project_id', id, toTask, limit === undefined ? ['position', 'id'] : ['updated_at', 'id'], limit, limit === undefined); }
   async listWorkSessionEntries(id: string) { return this.list('project_work_session_entries', 'session_id', id, toWorkSessionEntry, ['position', 'occurred_at', 'id']); }
-  async listWorkSessions(id: string) { return this.list('project_work_sessions', 'project_id', id, toWorkSession, ['started_at', 'id']); }
+  async listWorkSessions(id: string, limit?: number) { return this.list('project_work_sessions', 'project_id', id, toWorkSession, ['started_at', 'id'], limit, limit === undefined); }
   async saveDecision(value: ProjectDecision) { await this.upsert('project_decisions', decisionRow(value)); }
   async saveDeliverable(value: ProjectDeliverable) { await this.upsert('project_deliverables', deliverableRow(value)); }
   async saveKnowledgeItem(value: ProjectKnowledgeItem) { await this.upsert('project_knowledge_items', knowledgeRow(value)); }

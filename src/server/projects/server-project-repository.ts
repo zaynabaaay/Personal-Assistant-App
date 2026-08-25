@@ -18,7 +18,7 @@ export class ServerProjectConfigurationError extends Error {
   }
 }
 
-export function createServerProjectRepository(
+export function createServerSupabaseClient(
   context: ServerProjectRepositoryContext,
 ) {
   const supabaseUrl = process.env.SUPABASE_URL?.trim();
@@ -28,7 +28,7 @@ export function createServerProjectRepository(
     throw new ServerProjectConfigurationError();
   }
 
-  const client = createClient(supabaseUrl, publishableKey, {
+  return createClient(supabaseUrl, publishableKey, {
     auth: {
       autoRefreshToken: false,
       detectSessionInUrl: false,
@@ -38,6 +38,13 @@ export function createServerProjectRepository(
       headers: { Authorization: `Bearer ${context.accessToken}` },
     },
   });
+
+}
+
+export function createServerProjectRepository(
+  context: ServerProjectRepositoryContext,
+) {
+  const client = createServerSupabaseClient(context);
 
   // The verified ID narrows every query explicitly. The user's JWT is also
   // forwarded so Supabase RLS independently enforces the same ownership scope.

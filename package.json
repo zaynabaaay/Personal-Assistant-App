@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "test": "tsx --test tests/*.test.mjs",
     "start": "expo start",
     "start:dev-client": "expo start --dev-client",
     "android": "expo start --android",
@@ -13,12 +14,19 @@
     "predeploy": "expo export --platform web",
     "deploy": "gh-pages --nojekyll -d dist",
     "test:assistant": "tsx --test tests/assistant-backend.test.mjs",
+    "test:conversation-behavior": "tsx --test tests/assistant-conversation-behavior.test.mjs",
     "test:auth": "tsx --test tests/authentication.test.mjs",
     "test:calendar": "tsx --test tests/calendar-service.test.mjs",
     "test:projects": "tsx --test tests/project-domain.test.mjs",
     "test:project-persistence": "tsx --test tests/project-persistence.test.mjs",
     "test:project-tools": "tsx --test tests/project-assistant-tools.test.mjs",
     "test:project-write-tools": "tsx --test tests/project-assistant-write-tools.test.mjs",
+    "test:conversations": "tsx --test tests/conversation-lifecycle.test.mjs",
+    "test:conversation-search": "tsx --test tests/conversation-history-search.test.mjs",
+    "test:conversation-projects": "tsx --test tests/conversation-project-processing.test.mjs",
+    "test:memory": "tsx --test tests/general-memory.test.mjs",
+    "test:memory-challenges": "tsx --test tests/memory-fresh-challenges.test.mjs",
+    "test:memory-db": "node --test tests/general-memory-postgres.integration.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint"
   },
@@ -45,9 +53,11 @@
   "devDependencies": {
     "@expo/ngrok": "^4.1.3",
     "@types/react": "~19.2.2",
+    "embedded-postgres": "^18.4.0-beta.17",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.1",
     "gh-pages": "^6.3.0",
+    "pg": "^8.23.0",
     "tsx": "^4.23.12",
     "typescript": "~6.0.3"
   }

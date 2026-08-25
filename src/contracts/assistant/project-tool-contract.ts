@@ -357,7 +357,7 @@ function projectToolContract(
 export const ASSISTANT_PROJECT_TOOL_CONTRACTS = [
   projectToolContract(
     'list_projects',
-    'List the authenticated user’s persistent projects with basic identity and status. Use only for Project-related questions, usually before get_project_context when the project ID is unknown. Do not use for calendar-only or unrelated questions.',
+    'List a bounded set of the authenticated user’s persistent Project identities, including name, type, description, goal, status, and recency. Use selectively when the user explicitly names a Project, asks about their own ongoing work, uses a descriptive reference such as “the clothing brand,” “that website,” “the grant,” “my comic,” or “the manufacturer thing,” or says the topic was discussed before. Compare these identity clues before asking for an exact Project name. If one Project clearly matches, follow with get_project_context; if several plausibly match, ask a natural clarification instead of guessing or loading all their details. Do not use to classify ordinary conversation as Project-related, or for standalone factual, social, calendar-only, and unrelated questions.',
     {
       type: 'object',
       properties: {
@@ -372,7 +372,7 @@ export const ASSISTANT_PROJECT_TOOL_CONTRACTS = [
   ),
   projectToolContract(
     'get_project_context',
-    'Read a bounded, current view of one authenticated user Project. Choose work for tasks/milestones/sessions, knowledge for accepted facts/decisions/questions/resources, history for recent sessions/changes, overview for status, or comprehensive only when several sections are necessary. This tool never returns raw session transcripts and never modifies data.',
+    'Read a bounded, current view of one authenticated user Project. Choose the smallest useful focus: work for tasks/milestones/sessions, knowledge for accepted facts/decisions/questions/resources, history for recent sessions/changes, overview for status, and comprehensive only when several sections are truly needed. Use the result as evidence for a natural answer, not as a report template. This tool never returns raw session transcripts and never modifies data.',
     {
       type: 'object',
       properties: {

@@ -1,4 +1,6 @@
 import { ASSISTANT_CALENDAR_TOOL_CONTRACTS } from './calendar-tool-contract';
+import { ASSISTANT_CONVERSATION_HISTORY_TOOL_CONTRACTS } from './conversation-history-tool-contract';
+import { ASSISTANT_MEMORY_TOOL_CONTRACTS } from './memory-tool-contract';
 import { ASSISTANT_PROJECT_TOOL_CONTRACTS } from './project-tool-contract';
 import { ASSISTANT_PROJECT_WRITE_TOOL_CONTRACTS } from './project-write-tool-contract';
 import type {
@@ -10,6 +12,8 @@ import type {
 
 export const ASSISTANT_TOOL_CONTRACTS: readonly AssistantToolContract[] = [
   ...ASSISTANT_CALENDAR_TOOL_CONTRACTS,
+  ...ASSISTANT_CONVERSATION_HISTORY_TOOL_CONTRACTS,
+  ...ASSISTANT_MEMORY_TOOL_CONTRACTS,
   ...ASSISTANT_PROJECT_TOOL_CONTRACTS,
   ...ASSISTANT_PROJECT_WRITE_TOOL_CONTRACTS,
 ];

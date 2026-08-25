@@ -41,9 +41,100 @@ export type AssistantHandlerOptions = {
   apiKey?: string;
   executeServerTool?: AssistantServerToolExecutor;
   fetchImplementation?: typeof fetch;
+  logMemoryRouting?: (metadata: MemoryRoutingMetadata) => void;
   model?: string;
   verifyAccessToken?: AccessTokenVerifier;
 };
+
+export type MemoryRoutingMetadata = {
+  failureReason?: 'history_fallback_empty' | 'memory_empty_without_history' |
+    'recall_tool_error' | 'request_failed';
+  historyFallbackRan: boolean;
+  tools: {
+    layer?: 'any' | 'current_state' | 'durable';
+    query: {
+      characters: number;
+      fingerprint: string;
+      tokens: number;
+      truncated: boolean;
+    };
+    resultCount?: number;
+    status: 'error' | 'success';
+    tool: 'search_completed_conversations' | 'search_general_memory';
+    useful?: boolean;
+  }[];
+};
+
+function safeQueryDiagnostic(value: string) {
+  const normalized = value.normalize('NFKC').toLocaleLowerCase('en-US')
+    .trim().replace(/\s+/g, ' ');
+  const bounded = normalized.slice(0, 500);
+  let fingerprint = 0x811c9dc5;
+  for (let index = 0; index < bounded.length; index += 1) {
+    fingerprint ^= bounded.charCodeAt(index);
+    fingerprint = Math.imul(fingerprint, 0x01000193);
+  }
+  return {
+    characters: bounded.length,
+    fingerprint: (fingerprint >>> 0).toString(16).padStart(8, '0'),
+    tokens: bounded ? bounded.split(/\s+/).length : 0,
+    truncated: normalized.length > bounded.length,
+  };
+}
+
+function recordRecallRouting(
+  metadata: MemoryRoutingMetadata,
+  call: AssistantToolCall,
+  output: AssistantToolOutput,
+) {
+  if (call.name !== 'search_general_memory' &&
+    call.name !== 'search_completed_conversations') return;
+  const result = output.result as Record<string, unknown>;
+  const status = result.status === 'success' ? 'success' : 'error';
+  const resultCount = call.name === 'search_general_memory' && Array.isArray(result.memories)
+    ? result.memories.length
+    : call.name === 'search_completed_conversations' && Array.isArray(result.matches)
+      ? result.matches.length
+      : undefined;
+  const earlierMemoryWasInsufficient = metadata.tools.some((tool) =>
+    tool.tool === 'search_general_memory' &&
+    (tool.status === 'error' || tool.useful === false || tool.resultCount === 0));
+  if (call.name === 'search_completed_conversations' && earlierMemoryWasInsufficient) {
+    metadata.historyFallbackRan = true;
+  }
+  const recallArguments = call.arguments as {
+    layer?: 'any' | 'current_state' | 'durable';
+    query: string;
+  };
+  metadata.tools.push({
+    ...(call.name === 'search_general_memory' ? { layer: recallArguments.layer } : {}),
+    query: safeQueryDiagnostic(recallArguments.query),
+    ...(resultCount === undefined ? {} : { resultCount }),
+    status,
+    tool: call.name,
+    ...(call.name === 'search_general_memory' && typeof result.useful === 'boolean'
+      ? { useful: result.useful }
+      : {}),
+  });
+}
+
+function finalizeRecallRouting(
+  metadata: MemoryRoutingMetadata,
+  requestFailed = false,
+) {
+  const memory = metadata.tools.filter((tool) => tool.tool === 'search_general_memory');
+  const history = metadata.tools.filter((tool) => tool.tool === 'search_completed_conversations');
+  if (requestFailed) metadata.failureReason = 'request_failed';
+  else if (metadata.tools.some((tool) => tool.status === 'error')) {
+    metadata.failureReason = 'recall_tool_error';
+  } else if (memory.some((tool) => tool.useful === false || tool.resultCount === 0) &&
+    history.length === 0) {
+    metadata.failureReason = 'memory_empty_without_history';
+  } else if (metadata.historyFallbackRan && history.every((tool) => tool.resultCount === 0)) {
+    metadata.failureReason = 'history_fallback_empty';
+  }
+  return metadata;
+}
 
 export { ASSISTANT_REQUEST_LIMITS };
 
@@ -250,6 +341,10 @@ export async function handleAssistantRequest(
   const steps: AssistantToolStep[] = [...(body.toolContinuation?.steps ?? [])];
   const completedServerSteps: AssistantToolStep[] = [];
   const executeServerTool = options.executeServerTool ?? executeAssistantServerTool;
+  const recallRouting: MemoryRoutingMetadata = { historyFallbackRan: false, tools: [] };
+  const logMemoryRouting = options.logMemoryRouting ?? ((metadata: MemoryRoutingMetadata) => {
+    console.info('Assistant memory-recall routing.', metadata);
+  });
 
   try {
     while (true) {
@@ -261,6 +356,7 @@ export async function handleAssistantRequest(
       });
 
       if (modelResult.status === 'completed') {
+        logMemoryRouting(finalizeRecallRouting(recallRouting));
         return jsonResponse(
           { content: modelResult.content, status: 'completed' },
           200,
@@ -290,6 +386,9 @@ export async function handleAssistantRequest(
         accessToken,
         authenticatedUser.id,
       );
+      serverCalls.forEach((call, index) => {
+        recordRecallRouting(recallRouting, call, serverOutputs[index]);
+      });
       const step: AssistantToolStep = {
         calls: modelResult.toolCalls,
         outputs: serverOutputs,
@@ -311,6 +410,7 @@ export async function handleAssistantRequest(
       completedServerSteps.push(step);
     }
   } catch (error) {
+    logMemoryRouting(finalizeRecallRouting(recallRouting, true));
     if (request.signal.aborted) {
       return errorResponse(
         'assistant_unavailable',
