@@ -194,6 +194,51 @@ test('migration canonical identity normalizes structural variants without fuzzy 
   assert.notEqual(result.rows[0].a, result.rows[0].distinct_value);
 });
 
+test('legacy title repair is owner-scoped, compare-and-set, and cannot overwrite a good title', async () => {
+  await insertConversation(OWNER_A, 'title-repair');
+  await admin.query(`update public.completed_conversations
+    set title = 'What Did I Say About Shelves'
+    where owner_id = $1 and id = 'title-repair'`, [OWNER_A]);
+  const owner = await authenticatedClient(OWNER_A);
+  const other = await authenticatedClient(OWNER_B);
+  try {
+    const denied = await other.query(
+      `select public.update_completed_conversation_title($1,$2,$3) updated`,
+      ['title-repair', 'What Did I Say About Shelves', 'Cedar Shelves'],
+    );
+    assert.equal(denied.rows[0].updated, false);
+
+    const malformedReplacement = await owner.query(
+      `select public.update_completed_conversation_title($1,$2,$3) updated`,
+      ['title-repair', 'What Did I Say About Shelves', 'What Shelves Do I Want?'],
+    );
+    assert.equal(malformedReplacement.rows[0].updated, false);
+
+    const updated = await owner.query(
+      `select public.update_completed_conversation_title($1,$2,$3) updated`,
+      ['title-repair', 'What Did I Say About Shelves', 'Cedar Shelves'],
+    );
+    assert.equal(updated.rows[0].updated, true);
+    const protectedGoodTitle = await owner.query(
+      `select public.update_completed_conversation_title($1,$2,$3) updated`,
+      ['title-repair', 'Cedar Shelves', 'Shelves Chat'],
+    );
+    assert.equal(protectedGoodTitle.rows[0].updated, false);
+
+    const stored = (await admin.query(`select title,message_count,
+      (select count(*)::integer from public.conversation_messages messages
+       where messages.owner_id = conversation.owner_id
+         and messages.conversation_id = conversation.id) transcript_count
+      from public.completed_conversations conversation
+      where owner_id = $1 and id = 'title-repair'`, [OWNER_A])).rows[0];
+    assert.equal(stored.title, 'Cedar Shelves');
+    assert.equal(stored.message_count, stored.transcript_count);
+  } finally {
+    await owner.end();
+    await other.end();
+  }
+});
+
 test('chat deletion is owner-scoped and preserves memory and Project truth while detaching provenance', async () => {
   await insertConversation(OWNER_A, 'delete-chat');
   await admin.query(`

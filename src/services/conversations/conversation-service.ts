@@ -8,6 +8,7 @@ import type {
 import type { ConversationRepository } from './conversation-repository';
 import {
   generateReadableConversationTitle,
+  isPoorConversationTitle,
   normalizeGeneratedConversationTitle,
 } from './conversation-title';
 
@@ -20,6 +21,8 @@ type ConversationServiceOptions = {
   generateMetadata?: ConversationMetadataGenerator;
   now?: () => Date;
 };
+
+const LEGACY_TITLE_REPAIR_LIMIT = 12;
 
 let fallbackConversationSequence = 1;
 let fallbackMessageSequence = 1;
@@ -201,16 +204,56 @@ export class ConversationService {
     return persisted;
   }
 
-  getCompletedConversation(id: string) {
-    return this.repository.getCompletedConversation(id);
+  async getCompletedConversation(id: string) {
+    const record = await this.repository.getCompletedConversation(id);
+    if (!record) return null;
+    try {
+      return await this.repairCompletedConversationTitle(record);
+    } catch {
+      return record;
+    }
   }
 
   deleteCompletedConversation(id: string) {
     return this.repository.deleteCompletedConversation(id);
   }
 
-  listCompletedConversations() {
-    return this.repository.listCompletedConversations();
+  async listCompletedConversations() {
+    const conversations = await this.repository.listCompletedConversations();
+    const repairable = conversations.filter((conversation) =>
+      isPoorConversationTitle(conversation.title)
+    ).slice(0, LEGACY_TITLE_REPAIR_LIMIT);
+    const repaired = new Map<string, CompletedConversation>();
+
+    await Promise.all(repairable.map(async (conversation) => {
+      try {
+        const record = await this.repository.getCompletedConversation(conversation.id);
+        if (!record) return;
+        const value = await this.repairCompletedConversationTitle(record);
+        repaired.set(conversation.id, value.conversation);
+      } catch {
+        // Title repair is best-effort and must never prevent Chats from loading.
+      }
+    }));
+
+    return conversations.map((conversation) => repaired.get(conversation.id) ?? conversation);
+  }
+
+  private async repairCompletedConversationTitle(record: ConversationWithMessages) {
+    const currentTitle = record.conversation.title;
+    if (!isPoorConversationTitle(currentTitle)) return record;
+    const title = generateReadableConversationTitle({ messages: record.messages });
+    if (title === currentTitle || isPoorConversationTitle(title)) return record;
+
+    const updated = await this.repository.updateCompletedConversationTitle(
+      record.conversation.id,
+      currentTitle,
+      title,
+    );
+    return updated ? {
+      conversation: { ...record.conversation, metadataStatus: 'fallback' as const, title },
+      messages: record.messages,
+    } : record;
   }
 }
 

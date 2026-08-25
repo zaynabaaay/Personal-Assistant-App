@@ -11,4 +11,9 @@ export interface ConversationRepository {
   getCompletedConversation(id: string): Promise<ConversationWithMessages | null>;
   listCompletedConversations(): Promise<CompletedConversation[]>;
   saveActiveConversationAtomically(conversation: ActiveConversation): Promise<void>;
+  updateCompletedConversationTitle(
+    id: string,
+    expectedTitle: string,
+    title: string,
+  ): Promise<boolean>;
 }

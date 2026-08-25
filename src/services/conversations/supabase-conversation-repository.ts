@@ -180,6 +180,16 @@ export class SupabaseConversationRepository implements ConversationRepository {
     });
     if (error) throw error;
   }
+
+  async updateCompletedConversationTitle(id: string, expectedTitle: string, title: string) {
+    const { data, error } = await this.getClient().rpc('update_completed_conversation_title', {
+      p_conversation_id: id,
+      p_expected_title: expectedTitle,
+      p_title: title,
+    });
+    if (error) throw error;
+    return data === true;
+  }
 }
 
 export const conversationService = new ConversationService(

@@ -9,11 +9,21 @@ import {
 } from '../src/features/chats/chat-presentation.ts';
 import {
   generateReadableConversationTitle,
+  isPoorConversationTitle,
   normalizeGeneratedConversationTitle,
+  selectTitleUserMessages,
 } from '../src/services/conversations/conversation-title.ts';
 
 function message(content, role = 'user') {
   return { content, conversationId: 'chat-1', id: 'message-1', occurredAt: '', position: 0, role };
+}
+
+function transcript(contents) {
+  return { messages: contents.map((content, position) => ({
+    ...message(typeof content === 'string' ? content : content.content, content.role ?? 'user'),
+    id: `message-${position}`,
+    position,
+  })) };
 }
 
 function conversation(completedAt, overrides = {}) {
@@ -36,17 +46,91 @@ function conversation(completedAt, overrides = {}) {
 
 test('readable title generation is short, content-based, and has a safe fallback', () => {
   assert.equal(generateReadableConversationTitle({ messages: [message('I prefer sparkling water.')] }),
-    'Sparkling Water Preference');
+    'Sparkling Water');
   assert.equal(generateReadableConversationTitle({ messages: [message('Can you give me Korean stew ideas?')] }),
     'Korean Stew Ideas');
   assert.equal(generateReadableConversationTitle({ messages: [
     message('Hi Tina'),
     { ...message('I like linen lampshades.'), id: 'message-2', position: 1 },
-  ] }), 'Linen Lampshades Preference');
+  ] }), 'Linen Lampshades');
   assert.equal(generateReadableConversationTitle({ messages: [message('', 'assistant')] }), 'Saved Chat');
   assert.equal(normalizeGeneratedConversationTitle('Conversation — 2026-08-25 16:02', {
     messages: [message('I like linen lampshades.')],
-  }), 'Linen Lampshades Preference');
+  }), 'Linen Lampshades');
+});
+
+test('question framing becomes short subject-oriented archive labels', () => {
+  assert.equal(generateReadableConversationTitle(transcript([
+    'What colour sofa do I want?',
+  ])), 'Sofa Colour');
+  assert.equal(generateReadableConversationTitle(transcript([
+    'Do I keep my phone silent at night?',
+  ])), 'Phone Silent at Night');
+  assert.equal(generateReadableConversationTitle(transcript([
+    'How do I like my lighting?',
+  ])), 'Lighting Preferences');
+  assert.equal(generateReadableConversationTitle(transcript([
+    'What did I decide for the reading corner?',
+  ])), 'Reading Corner Decision');
+  assert.equal(generateReadableConversationTitle(transcript([
+    'What did I decide my future bakery name should be?',
+  ])), 'Future Bakery Name');
+});
+
+test('later user-authored modifiers outrank literal recall questions', () => {
+  assert.equal(generateReadableConversationTitle(transcript([
+    'What did I say about shelves?',
+    { content: 'Walnut shelves could add warmth.', role: 'assistant' },
+    'I think cedar shelves would look nice.',
+  ])), 'Cedar Shelves');
+  assert.equal(generateReadableConversationTitle(transcript([
+    'What kind of planters do I like?',
+    'Maybe I need to think about it.',
+    'I prefer terracotta planters.',
+  ])), 'Terracotta Planters');
+});
+
+test('broad multi-topic preferences receive a neutral collective label', () => {
+  assert.equal(generateReadableConversationTitle(transcript([
+    'I prefer sparkling water.',
+    'I like warm lighting.',
+    'I love linen lampshades.',
+  ])), 'Everyday Preferences');
+});
+
+test('assistant suggestions are excluded unless the user states the subject themselves', () => {
+  assert.equal(generateReadableConversationTitle(transcript([
+    'What did I say about shelves?',
+    { content: 'You could use walnut shelves.', role: 'assistant' },
+    "No, I don't want that.",
+  ])), 'Shelves Chat');
+});
+
+test('title context is bounded while retaining early questions and later conclusions', () => {
+  const selected = selectTitleUserMessages(transcript(Array.from({ length: 12 }, (_, index) =>
+    index === 0 ? 'What did I say about shelves?' :
+      index === 11 ? 'I think cedar shelves would look nice.' : `Useful note ${index}`
+  )));
+  assert.equal(selected.length, 8);
+  assert.equal(selected[0], 'What did I say about shelves?');
+  assert.equal(selected.at(-1), 'I think cedar shelves would look nice.');
+  assert.ok(selected.join('').length <= 2_400);
+});
+
+test('poor stored titles are detected and malformed regeneration fails safe', () => {
+  for (const title of [
+    'What Did I Decide For The',
+    'What Did I Decide My Future',
+    'Do I Keep My Phone Silent',
+    'Conversation — 2026-08-25 16:02',
+    'Saved Chat',
+  ]) assert.equal(isPoorConversationTitle(title), true, title);
+  assert.equal(isPoorConversationTitle('Reading Corner Decision'), false);
+  assert.equal(isPoorConversationTitle('Phone Silent at Night'), false);
+  assert.equal(normalizeGeneratedConversationTitle('What Did I Decide For The', transcript([
+    'What did I decide for the?',
+  ])), 'Saved Chat');
+  assert.equal(generateReadableConversationTitle(transcript(['Okay', 'Thanks'])), 'Saved Chat');
 });
 
 test('chat metadata keeps local date, local time, and secondary message count', () => {
@@ -98,4 +182,18 @@ test('deletion RPC is JWT-owned and preserves memory and Project truth while cle
   assert.match(migration, /delete from public\.memory_message_processing/);
   assert.match(migration, /delete from public\.completed_conversations/);
   assert.match(migration, /grant execute .* to authenticated/);
+});
+
+test('legacy title repair RPC is owner-scoped, compare-and-set, and title-only', async () => {
+  const migration = await readFile(new URL(
+    '../supabase/migrations/20260825200000_refine_completed_conversation_titles.sql',
+    import.meta.url,
+  ), 'utf8');
+  assert.match(migration, /authenticated_owner uuid := auth\.uid\(\)/);
+  assert.match(migration, /owner_id = authenticated_owner and id = p_conversation_id/);
+  assert.match(migration, /stored_title is distinct from p_expected_title/);
+  assert.match(migration, /if not current_is_poor or replacement_is_poor then return false/);
+  assert.match(migration, /set title = btrim\(p_title\), metadata_status = 'fallback'/);
+  assert.doesNotMatch(migration, /general_memories|project_(?:tasks|decisions|knowledge_items)/);
+  assert.doesNotMatch(migration, /p_owner|p_user/);
 });

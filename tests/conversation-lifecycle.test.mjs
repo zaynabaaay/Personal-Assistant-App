@@ -54,6 +54,7 @@ class InMemoryConversationRepository {
     this.owner = owner;
     this.writeCount = 0;
     this.finalizeCount = 0;
+    this.titleUpdateCount = 0;
     this.failNextWrite = false;
     this.normalizeTimestampsOnRead = false;
   }
@@ -142,6 +143,15 @@ class InMemoryConversationRepository {
       .filter(([key]) => key.startsWith(`${this.owner}:`))
       .map(([, value]) => structuredClone(value))
       .sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+  }
+
+  async updateCompletedConversationTitle(id, expectedTitle, title) {
+    const key = this.key(id);
+    const conversation = this.store.conversations.get(key);
+    if (!conversation || conversation.title !== expectedTitle) return false;
+    this.titleUpdateCount += 1;
+    this.store.conversations.set(key, { ...conversation, metadataStatus: 'fallback', title });
+    return true;
   }
 }
 
@@ -470,7 +480,7 @@ test('metadata generation failure uses a deterministic safe fallback without blo
   assert.equal(completed.conversation.metadataStatus, 'fallback');
   assert.equal(completed.conversation.title, expected.title);
   assert.equal(completed.conversation.summary, expected.summary);
-  assert.equal(completed.conversation.title, 'Plan the Afternoon');
+  assert.equal(completed.conversation.title, 'Afternoon Plan');
 });
 
 test('generated chat metadata is persisted and reused without regenerating on retry', async () => {
@@ -490,6 +500,35 @@ test('generated chat metadata is persisted and reused without regenerating on re
   assert.equal(first.conversation.title, 'Sparkling Water Preference');
   assert.equal(second.conversation.title, 'Sparkling Water Preference');
   assert.equal(generationCount, 1);
+});
+
+test('poor legacy titles regenerate once from bounded transcript content and good titles remain unchanged', async () => {
+  const store = new DurableConversationStore();
+  const repository = new InMemoryConversationRepository(store);
+  const conversationService = service(repository);
+  const active = activeConversation();
+  active.messages[0].content = 'What did I say about shelves?';
+  active.messages.push({
+    content: 'I think cedar shelves would look nice.',
+    conversationId: active.id,
+    id: `${active.id}:message:2`,
+    occurredAt: '2026-08-21T14:30:06.000Z',
+    position: 2,
+    role: 'user',
+  });
+  active.revision = 3;
+  active.updatedAt = active.messages[2].occurredAt;
+  await conversationService.finishConversation(active);
+  const key = repository.key(active.id);
+  store.conversations.get(key).title = 'What Did I Say About Shelves';
+
+  const firstList = await conversationService.listCompletedConversations();
+  const secondList = await conversationService.listCompletedConversations();
+
+  assert.equal(firstList[0].title, 'Cedar Shelves');
+  assert.equal(secondList[0].title, 'Cedar Shelves');
+  assert.equal(store.conversations.get(key).title, 'Cedar Shelves');
+  assert.equal(repository.titleUpdateCount, 1);
 });
 
 test('owner can delete an own completed chat idempotently while another owner cannot', async () => {
