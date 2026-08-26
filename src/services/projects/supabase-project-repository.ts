@@ -8,6 +8,7 @@ import type {
   ProjectKnowledgeItem,
   ProjectMilestone,
   ProjectResource,
+  ProjectSection,
   ProjectTask,
   ProjectWorkSession,
   ProjectWorkSessionEntry,
@@ -27,6 +28,7 @@ type ProjectTable =
   | 'project_knowledge_items'
   | 'project_milestones'
   | 'project_resources'
+  | 'project_sections'
   | 'project_tasks'
   | 'project_work_session_entries'
   | 'project_work_sessions'
@@ -197,6 +199,16 @@ function toResource(row: DatabaseRow): ProjectResource {
   } as ProjectResource;
 }
 
+function toSection(row: DatabaseRow): ProjectSection {
+  return {
+    ...baseProjectEntity(row),
+    isDefault: row.is_default === true,
+    position: requiredNumber(row, 'position'),
+    status: requiredString(row, 'status') as ProjectSection['status'],
+    title: requiredString(row, 'title'),
+  } as ProjectSection;
+}
+
 function toChangeEvent(row: DatabaseRow): ProjectChangeEvent {
   return {
     ...optionalField('after', row.after_state),
@@ -288,6 +300,12 @@ function resourceRow(value: ProjectResource) {
     updated_at: value.updatedAt };
 }
 
+function sectionRow(value: ProjectSection) {
+  return { created_at: value.createdAt, id: value.id, is_default: value.isDefault,
+    position: value.position, project_id: value.projectId, status: value.status,
+    title: value.title, updated_at: value.updatedAt };
+}
+
 function changeEventRow(value: ProjectChangeEvent) {
   return { after_state: nullable(value.after), before_state: nullable(value.before),
     entity_id: value.entityId, entity_type: value.entityType, event_type: value.eventType,
@@ -310,6 +328,7 @@ export function createConversationProjectChangesPayload(
     milestones: (changes.milestones ?? []).map(milestoneRow),
     projects: (changes.projects ?? []).map(projectRow),
     resources: (changes.resources ?? []).map(resourceRow),
+    sections: [],
     tasks: (changes.tasks ?? []).map(taskRow),
     work_session_entries: [],
     work_sessions: (changes.workSessions ?? []).map(workSessionRow),
@@ -365,6 +384,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
   async getKnowledgeItem(id: string) { return this.getOne('project_knowledge_items', id, toKnowledgeItem); }
   async getMilestone(id: string) { return this.getOne('project_milestones', id, toMilestone); }
   async getProject(id: string) { return this.getOne('projects', id, toProject); }
+  async getSection(id: string) { return this.getOne('project_sections', id, toSection); }
   async getTask(id: string) { return this.getOne('project_tasks', id, toTask); }
   async getWorkSession(id: string) { return this.getOne('project_work_sessions', id, toWorkSession); }
   async listChangeEvents(id: string) { return this.list('project_change_events', 'project_id', id, toChangeEvent, ['occurred_at', 'id']); }
@@ -374,6 +394,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
   async listMilestones(id: string) { return this.list('project_milestones', 'project_id', id, toMilestone, ['position', 'id']); }
   async listProjects(limit?: number) { return this.listAll('projects', toProject, limit); }
   async listResources(id: string) { return this.list('project_resources', 'project_id', id, toResource); }
+  async listSections(id: string) { return this.list('project_sections', 'project_id', id, toSection, ['position', 'id']); }
   async listTasks(id: string, limit?: number) { return this.list('project_tasks', 'project_id', id, toTask, limit === undefined ? ['position', 'id'] : ['updated_at', 'id'], limit, limit === undefined); }
   async listWorkSessionEntries(id: string) { return this.list('project_work_session_entries', 'session_id', id, toWorkSessionEntry, ['position', 'occurred_at', 'id']); }
   async listWorkSessions(id: string, limit?: number) { return this.list('project_work_sessions', 'project_id', id, toWorkSession, ['started_at', 'id'], limit, limit === undefined); }
@@ -383,6 +404,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
   async saveMilestone(value: ProjectMilestone) { await this.upsert('project_milestones', milestoneRow(value)); }
   async saveProject(value: Project) { await this.upsert('projects', projectRow(value)); }
   async saveResource(value: ProjectResource) { await this.upsert('project_resources', resourceRow(value)); }
+  async saveSection(value: ProjectSection) { await this.upsert('project_sections', sectionRow(value)); }
   async saveTask(value: ProjectTask) { await this.upsert('project_tasks', taskRow(value)); }
   async saveWorkSession(value: ProjectWorkSession) { await this.upsert('project_work_sessions', workSessionRow(value)); }
 
@@ -409,12 +431,23 @@ export class SupabaseProjectRepository implements ProjectRepository {
       milestones: (changes.milestones ?? []).map(milestoneRow),
       projects: (changes.projects ?? []).map(projectRow),
       resources: (changes.resources ?? []).map(resourceRow),
+      sections: (changes.sections ?? []).map(sectionRow),
       tasks: (changes.tasks ?? []).map(taskRow),
       work_session_entries: entryRows,
       work_sessions: (changes.workSessions ?? []).map(workSessionRow),
     };
     const { error } = await this.getClient().rpc('commit_project_changes', { p_changes: payload });
     if (error) throw error;
+  }
+
+  async reorderSections(projectId: string, sectionIds: readonly string[], updatedAt: string) {
+    const { data, error } = await this.getClient().rpc('reorder_project_sections', {
+      p_project_id: projectId,
+      p_section_ids: [...sectionIds],
+      p_updated_at: updatedAt,
+    });
+    if (error) throw error;
+    return (data ?? []).map((row: DatabaseRow) => toSection(row));
   }
 
 }

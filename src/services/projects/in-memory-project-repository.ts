@@ -7,6 +7,7 @@ import type {
   ProjectKnowledgeItem,
   ProjectMilestone,
   ProjectResource,
+  ProjectSection,
   ProjectTask,
   ProjectWorkSession,
   ProjectWorkSessionEntry,
@@ -25,6 +26,7 @@ export type InMemoryProjectRepositorySeed = {
   milestones?: ProjectMilestone[];
   projects?: Project[];
   resources?: ProjectResource[];
+  sections?: ProjectSection[];
   tasks?: ProjectTask[];
   workSessionEntries?: ProjectWorkSessionEntry[];
   workSessions?: ProjectWorkSession[];
@@ -55,6 +57,7 @@ export class InMemoryProjectRepository implements ProjectRepository {
   private readonly milestones: Map<string, ProjectMilestone>;
   private readonly projects: Map<string, Project>;
   private readonly resources: Map<string, ProjectResource>;
+  private readonly sections: Map<string, ProjectSection>;
   private readonly tasks: Map<string, ProjectTask>;
   private readonly workSessionEntries: Map<string, ProjectWorkSessionEntry>;
   private readonly workSessions: Map<string, ProjectWorkSession>;
@@ -67,6 +70,7 @@ export class InMemoryProjectRepository implements ProjectRepository {
     this.milestones = createMap(seed.milestones);
     this.projects = createMap(seed.projects);
     this.resources = createMap(seed.resources);
+    this.sections = createMap(seed.sections);
     this.tasks = createMap(seed.tasks);
     this.workSessionEntries = createMap(seed.workSessionEntries);
     this.workSessions = createMap(seed.workSessions);
@@ -94,6 +98,10 @@ export class InMemoryProjectRepository implements ProjectRepository {
 
   async getProject(id: string) {
     return this.get(this.projects, id);
+  }
+
+  async getSection(id: string) {
+    return this.get(this.sections, id);
   }
 
   async getTask(id: string) {
@@ -138,6 +146,12 @@ export class InMemoryProjectRepository implements ProjectRepository {
 
   async listResources(projectId: string) {
     return listForProject(this.resources.values(), projectId);
+  }
+
+  async listSections(projectId: string) {
+    return listForProject(this.sections.values(), projectId).sort(
+      (left, right) => left.position - right.position || left.id.localeCompare(right.id),
+    );
   }
 
   async listTasks(projectId: string) {
@@ -185,6 +199,10 @@ export class InMemoryProjectRepository implements ProjectRepository {
     this.resources.set(resource.id, clone(resource));
   }
 
+  async saveSection(section: ProjectSection) {
+    this.sections.set(section.id, clone(section));
+  }
+
   async saveTask(task: ProjectTask) {
     this.tasks.set(task.id, clone(task));
   }
@@ -211,8 +229,29 @@ export class InMemoryProjectRepository implements ProjectRepository {
     apply(this.knowledgeItems, changes.knowledgeItems);
     apply(this.decisions, changes.decisions);
     apply(this.resources, changes.resources);
+    apply(this.sections, changes.sections);
     apply(this.workSessionEntries, changes.workSessionEntries);
     apply(this.changeEvents, changes.changeEvents);
+  }
+
+  async reorderSections(projectId: string, sectionIds: readonly string[], updatedAt: string) {
+    const sections = await this.listSections(projectId);
+    const active = sections.filter((section) => section.status === 'active');
+    if (
+      sectionIds.length !== active.length ||
+      new Set(sectionIds).size !== sectionIds.length ||
+      sectionIds.some((id) => !active.some((section) => section.id === id))
+    ) throw new Error('Section order must contain every active section in this Project.');
+
+    sectionIds.forEach((id, position) => {
+      const section = this.sections.get(id);
+      if (!section || section.projectId !== projectId) {
+        throw new Error('A section does not belong to this Project.');
+      }
+      this.sections.set(id, clone({ ...section, position, updatedAt }));
+    });
+    return this.listSections(projectId).then((values) =>
+      values.filter((section) => section.status === 'active'));
   }
 
   private get<T>(values: Map<string, T>, id: string) {

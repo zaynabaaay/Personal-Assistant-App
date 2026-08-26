@@ -28,6 +28,10 @@ import {
   InvalidAccessTokenError,
   SupabaseAuthUnavailableError,
 } from '../auth/supabase-token-verifier';
+import {
+  PROJECT_DEFAULT_DISABLED_TOOLS,
+  routeScopedProjectRequest,
+} from './project-scope-routing';
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -338,6 +342,7 @@ export async function handleAssistantRequest(
   }
 
   const body = parsedBody.body;
+  const scopedProjectRoute = routeScopedProjectRequest(body);
   const steps: AssistantToolStep[] = [...(body.toolContinuation?.steps ?? [])];
   const completedServerSteps: AssistantToolStep[] = [];
   const executeServerTool = options.executeServerTool ?? executeAssistantServerTool;
@@ -347,9 +352,52 @@ export async function handleAssistantRequest(
   });
 
   try {
+    const scopedContextCallId = 'scoped-project-context';
+    const hasScopedContext = steps.some((step) =>
+      step.calls.some((call) => call.callId === scopedContextCallId));
+    if (scopedProjectRoute && body.projectScope && !hasScopedContext) {
+      const scopedCall: AssistantToolCall = {
+        arguments: {
+          focus: scopedProjectRoute.focus,
+          projectId: body.projectScope.projectId,
+        },
+        callId: scopedContextCallId,
+        execution: 'server',
+        name: 'get_project_context',
+      };
+      const scopedOutputs = await executeServerCalls(
+        [scopedCall],
+        executeServerTool,
+        accessToken,
+        authenticatedUser.id,
+      );
+      const scopedResult = scopedOutputs[0].result as {
+        project?: { id?: unknown; name?: unknown };
+        status?: unknown;
+      };
+      if (
+        scopedResult.status !== 'success' ||
+        scopedResult.project?.id !== body.projectScope.projectId ||
+        scopedResult.project?.name !== body.projectScope.projectName
+      ) {
+        return errorResponse(
+          'invalid_request',
+          'The selected Project could not be verified.',
+          400,
+          responseOrigin,
+        );
+      }
+      const scopedStep = { calls: [scopedCall], outputs: scopedOutputs };
+      steps.unshift(scopedStep);
+      completedServerSteps.push(scopedStep);
+    }
+
     while (true) {
       const modelResult = await requestOpenAIAssistant(body, steps, {
         apiKey,
+        ...(scopedProjectRoute
+          ? { disabledToolNames: PROJECT_DEFAULT_DISABLED_TOOLS }
+          : {}),
         fetchImplementation: options.fetchImplementation ?? fetch,
         model: options.model ?? DEFAULT_MODEL,
         signal: request.signal,

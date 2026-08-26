@@ -19,6 +19,7 @@ const CHANGE_TABLES = {
   milestones: 'project_milestones',
   projects: 'projects',
   resources: 'project_resources',
+  sections: 'project_sections',
   tasks: 'project_tasks',
   work_session_entries: 'project_work_session_entries',
   work_sessions: 'project_work_sessions',
@@ -88,8 +89,25 @@ class FakeSupabaseDatabase {
   client(ownerId) {
     return {
       from: (table) => new FakeQuery(this, ownerId, table),
-      rpc: async (name, { p_changes: changes }) => {
+      rpc: async (name, input) => {
+        if (name === 'reorder_project_sections') {
+          const table = this.table('project_sections');
+          const rows = input.p_section_ids.map((id, position) => {
+            const key = `${ownerId}:${id}`;
+            const row = table.get(key);
+            if (!row || row.project_id !== input.p_project_id || row.status !== 'active') {
+              return null;
+            }
+            const updated = { ...row, position, updated_at: input.p_updated_at };
+            table.set(key, updated);
+            return clone(updated);
+          });
+          return rows.some((row) => !row)
+            ? { data: null, error: new Error('Cross-Project reorder rejected') }
+            : { data: rows, error: null };
+        }
         assert.equal(name, 'commit_project_changes');
+        const changes = input.p_changes;
         this.commitCalls += 1;
         if (this.failNextCommit) {
           this.failNextCommit = false;
@@ -142,6 +160,7 @@ test('projects and every existing child shape survive a fresh repository session
   await first.saveKnowledgeItem({ content: 'A durable fact', createdAt: CREATED_AT, id: 'knowledge-1', kind: 'fact', projectId: PROJECT_ID, sourceSessionId: 'session-1', status: 'current', updatedAt: CREATED_AT });
   await first.saveDecision({ createdAt: CREATED_AT, decidedAt: CREATED_AT, id: 'decision-1', projectId: PROJECT_ID, sourceSessionId: 'session-1', statement: 'Keep the model', status: 'active', updatedAt: CREATED_AT });
   await first.saveResource({ createdAt: CREATED_AT, externalUrl: 'https://example.com', id: 'resource-1', name: 'Reference', projectId: PROJECT_ID, role: 'reference', sourceSessionId: 'session-1', type: 'link', updatedAt: CREATED_AT });
+  await first.saveSection({ createdAt: CREATED_AT, id: 'section-1', isDefault: true, position: 0, projectId: PROJECT_ID, status: 'active', title: 'Overview', updatedAt: CREATED_AT });
   await first.saveWorkSessionEntry({ content: 'Unmodified raw thought', id: 'entry-1', kind: 'user_message', occurredAt: CREATED_AT, position: 1, sessionId: 'session-1' });
 
   const fresh = repository(database);
@@ -154,6 +173,7 @@ test('projects and every existing child shape survive a fresh repository session
   assert.equal((await fresh.listKnowledgeItems(PROJECT_ID))[0].content, 'A durable fact');
   assert.equal((await fresh.listDecisions(PROJECT_ID))[0].statement, 'Keep the model');
   assert.equal((await fresh.listResources(PROJECT_ID))[0].externalUrl, 'https://example.com');
+  assert.equal((await fresh.listSections(PROJECT_ID))[0].title, 'Overview');
   assert.deepEqual(await fresh.listWorkSessionEntries('session-1'), [{ content: 'Unmodified raw thought', id: 'entry-1', kind: 'user_message', occurredAt: CREATED_AT, position: 1, sessionId: 'session-1' }]);
 });
 
@@ -162,6 +182,30 @@ test('repository reads are isolated to the authenticated owner', async () => {
   await repository(database, OWNER_A).saveProject(project());
   assert.equal(await repository(database, OWNER_B).getProject(PROJECT_ID), null);
   assert.deepEqual(await repository(database, OWNER_B).listProjects(), []);
+  await repository(database, OWNER_A).saveSection({ createdAt: CREATED_AT, id: 'section-1', isDefault: true, position: 0, projectId: PROJECT_ID, status: 'active', title: 'Overview', updatedAt: CREATED_AT });
+  assert.equal(await repository(database, OWNER_B).getSection('section-1'), null);
+  assert.deepEqual(await repository(database, OWNER_B).listSections(PROJECT_ID), []);
+});
+
+test('new Project and Overview use one atomic repository commit', async () => {
+  const database = new FakeSupabaseDatabase();
+  const projects = repository(database);
+  const service = new ProjectService(projects, {
+    createId: () => PROJECT_ID,
+    now: () => new Date(CREATED_AT),
+  });
+
+  database.failNextCommit = true;
+  await assert.rejects(
+    service.createProject({ name: 'Atomic Project', timezone: 'America/Toronto' }),
+    /Injected transaction failure/,
+  );
+  assert.equal(await projects.getProject(PROJECT_ID), null);
+  assert.deepEqual(await projects.listSections(PROJECT_ID), []);
+
+  await service.createProject({ name: 'Atomic Project', timezone: 'America/Toronto' });
+  assert.equal((await projects.getProject(PROJECT_ID)).name, 'Atomic Project');
+  assert.deepEqual((await projects.listSections(PROJECT_ID)).map(({ title }) => title), ['Overview']);
 });
 
 test('meaningful entity and history writes use one atomic RPC and roll back together', async () => {
@@ -202,7 +246,9 @@ test('superseded knowledge and decision replacement links persist', async () => 
 
 test('migration enables owner RLS and derives atomic-write ownership from auth.uid()', async () => {
   const migration = await readFile(new URL('../supabase/migrations/20260813150000_create_project_persistence.sql', import.meta.url), 'utf8');
-  const tables = Object.values(CHANGE_TABLES);
+  const tables = Object.values(CHANGE_TABLES).filter(
+    (table) => table !== 'project_sections',
+  );
   for (const table of tables) assert.match(migration, new RegExp(`create table public\\.${table}`));
   assert.match(migration, /enable row level security/);
   assert.match(migration, /owner_id = \(select auth\.uid\(\)\)/);
@@ -212,4 +258,22 @@ test('migration enables owner RLS and derives atomic-write ownership from auth.u
   assert.doesNotMatch(migration, /service_role/);
   assert.equal((migration.match(/enable row level security/g) ?? []).length, 1);
   assert.match(migration, /security definer\s+set search_path = ''/);
+});
+
+test('section migration binds ownership, backfills Overview, and exposes only scoped safe writes', async () => {
+  const migration = await readFile(new URL('../supabase/migrations/20260826120000_create_project_sections.sql', import.meta.url), 'utf8');
+  assert.match(migration, /create table public\.project_sections/);
+  assert.match(migration, /foreign key \(owner_id, project_id\)\s+references public\.projects\(owner_id, id\)/);
+  assert.match(migration, /create unique index project_sections_one_default_idx/);
+  assert.match(migration, /create unique index project_sections_active_title_idx/);
+  assert.match(migration, /'project-section-overview:' \|\| id/);
+  assert.match(migration, /on conflict \(owner_id, id\) do nothing/);
+  assert.match(migration, /project_sections_owner_access/);
+  assert.match(migration, /owner_id = \(select auth\.uid\(\)\)/);
+  assert.match(migration, /project_sections_protect_identity/);
+  assert.match(migration, /new\.project_id is distinct from old\.project_id/);
+  assert.match(migration, /grant select, insert, update on table public\.project_sections/);
+  assert.doesNotMatch(migration, /grant .*delete.*project_sections/i);
+  assert.match(migration, /create function public\.reorder_project_sections/);
+  assert.match(migration, /perform private\.upsert_owned_project_rows\('public\.project_sections'/);
 });

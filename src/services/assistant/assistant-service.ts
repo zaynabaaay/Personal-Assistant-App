@@ -41,7 +41,10 @@ export class AssistantService {
     this.sessionId = createSessionId();
   }
 
-  async respond(messages: readonly AssistantMessage[]): Promise<AssistantResult> {
+  async respond(
+    messages: readonly AssistantMessage[],
+    options: { projectId?: string; projectName?: string } = {},
+  ): Promise<AssistantResult> {
     this.cancelRequest();
 
     const controller = new AbortController();
@@ -49,6 +52,9 @@ export class AssistantService {
     const request: AssistantRequest = {
       context: createAssistantContext(),
       messages: messages.map((message) => ({ ...message })),
+      ...(options.projectId && options.projectName
+        ? { projectScope: { projectId: options.projectId, projectName: options.projectName } }
+        : {}),
       sessionId,
     };
 

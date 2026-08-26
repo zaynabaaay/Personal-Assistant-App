@@ -558,6 +558,10 @@ export default function HomeScreen() {
             setDrawerOpen(false);
             router.push('/history' as Href);
           }}
+          onOpenProjects={() => {
+            setDrawerOpen(false);
+            router.push('/projects' as Href);
+          }}
           onSelectChat={(conversationId) => {
             setDrawerOpen(false);
             router.push({

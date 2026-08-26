@@ -29,6 +29,17 @@ export type Project = {
   updatedAt: ISODateTime;
 };
 
+export type ProjectSection = {
+  createdAt: ISODateTime;
+  id: ProjectEntityId;
+  isDefault: boolean;
+  position: number;
+  projectId: ProjectId;
+  status: 'active' | 'archived';
+  title: string;
+  updatedAt: ISODateTime;
+};
+
 export type ProjectMilestone = {
   completedAt?: ISODateTime;
   createdAt: ISODateTime;

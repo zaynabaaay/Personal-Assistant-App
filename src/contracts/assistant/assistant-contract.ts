@@ -18,6 +18,10 @@ export type AssistantMessage = {
 export type AssistantRequest = {
   context: AssistantContext;
   messages: readonly AssistantMessage[];
+  projectScope?: {
+    projectId: string;
+    projectName: string;
+  };
   sessionId: string;
 };
 

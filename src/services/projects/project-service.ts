@@ -19,6 +19,7 @@ import type {
   ProjectKnowledgeKind,
   ProjectMilestone,
   ProjectPriority,
+  ProjectSection,
   ProjectStatus,
   ProjectTask,
   ProjectTaskStatus,
@@ -104,6 +105,12 @@ export type UpdateDeliverableInput = Partial<Pick<
   'description' | 'dueDate' | 'milestoneId' | 'name' | 'status'
 >>;
 
+export const PROJECT_SECTION_TITLE_MAX_LENGTH = 48;
+
+export function projectOverviewSectionId(projectId: string) {
+  return `project-section-overview:${projectId}`;
+}
+
 export type CreateKnowledgeInput = {
   content: string;
   kind: ProjectKnowledgeKind;
@@ -144,6 +151,20 @@ function normalizedIdentity(value: string) {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
 
+function requireSectionTitle(value: string) {
+  const title = value.trim().replace(/\s+/g, ' ');
+  if (!title) {
+    throw new ProjectDomainError('invalid_value', 'Section title cannot be empty.');
+  }
+  if (title.length > PROJECT_SECTION_TITLE_MAX_LENGTH) {
+    throw new ProjectDomainError(
+      'invalid_value',
+      `Section title cannot exceed ${PROJECT_SECTION_TITLE_MAX_LENGTH} characters.`,
+    );
+  }
+  return title;
+}
+
 function requireDate(value: string | undefined, label: string) {
   if (value === undefined) return undefined;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
@@ -174,7 +195,10 @@ export class ProjectService {
       (project) => normalizedIdentity(project.name) === normalizedIdentity(name) &&
         project.status !== 'archived' && project.status !== 'cancelled',
     );
-    if (duplicate) return { outcome: 'unchanged', value: duplicate };
+    if (duplicate) {
+      await this.ensureOverviewSection(duplicate.id);
+      return { outcome: 'unchanged', value: duplicate };
+    }
 
     const occurredAt = this.currentTime();
     const project: Project = {
@@ -191,8 +215,142 @@ export class ProjectService {
       type: input.type ?? 'general',
       updatedAt: occurredAt,
     } as Project;
-    await this.repository.saveProject(project);
+    await this.repository.saveAtomically({
+      projects: [project],
+      sections: [this.createOverviewSection(project.id, occurredAt)],
+    });
     return { outcome: 'created', value: project };
+  }
+
+  async ensureOverviewSection(projectId: string) {
+    await this.requireProject(projectId);
+    const existing = (await this.repository.listSections(projectId)).find(
+      (section) => section.isDefault,
+    );
+    if (existing) return existing;
+
+    const overview = this.createOverviewSection(projectId, this.currentTime());
+    await this.repository.saveSection(overview);
+    return overview;
+  }
+
+  async listSections(projectId: string) {
+    await this.ensureOverviewSection(projectId);
+    return this.repository.listSections(projectId);
+  }
+
+  async addSection(
+    projectId: string,
+    titleInput: string,
+  ): Promise<ProjectWriteResult<ProjectSection>> {
+    await this.requireProject(projectId);
+    const title = requireSectionTitle(titleInput);
+    const sections = await this.repository.listSections(projectId);
+    this.rejectDuplicateActiveSectionTitle(sections, title);
+    const occurredAt = this.currentTime();
+    const section: ProjectSection = {
+      createdAt: occurredAt,
+      id: this.createId(),
+      isDefault: false,
+      position: sections
+        .filter((value) => value.status === 'active')
+        .reduce((maximum, value) => Math.max(maximum, value.position), -1) + 1,
+      projectId,
+      status: 'active',
+      title,
+      updatedAt: occurredAt,
+    };
+    await this.repository.saveSection(section);
+    return { outcome: 'created', value: section };
+  }
+
+  async renameSection(
+    projectId: string,
+    sectionId: string,
+    titleInput: string,
+  ): Promise<ProjectWriteResult<ProjectSection>> {
+    const section = await this.requireSection(sectionId);
+    this.requireProjectMatch(projectId, section.projectId);
+    const title = requireSectionTitle(titleInput);
+    if (section.isDefault && title !== 'Overview') {
+      throw new ProjectDomainError('invalid_transition', 'Overview cannot be renamed.');
+    }
+    if (section.title === title) return { outcome: 'unchanged', value: section };
+    const sections = await this.repository.listSections(projectId);
+    this.rejectDuplicateActiveSectionTitle(sections, title, section.id);
+    const updated = { ...section, title, updatedAt: this.currentTime() };
+    await this.repository.saveSection(updated);
+    return { outcome: 'updated', value: updated };
+  }
+
+  async reorderSections(projectId: string, orderedSectionIds: readonly string[]) {
+    await this.requireProject(projectId);
+    const active = (await this.repository.listSections(projectId)).filter(
+      (section) => section.status === 'active',
+    );
+    const supplied = new Set(orderedSectionIds);
+    if (
+      supplied.size !== orderedSectionIds.length ||
+      orderedSectionIds.length !== active.length ||
+      active.some((section) => !supplied.has(section.id))
+    ) {
+      throw new ProjectDomainError(
+        'project_mismatch',
+        'Section order must contain every active section in this Project exactly once.',
+      );
+    }
+    const overview = active.find((section) => section.isDefault);
+    if (!overview || orderedSectionIds[0] !== overview.id) {
+      throw new ProjectDomainError('invalid_transition', 'Overview must remain first.');
+    }
+    if (active.every((section, index) => section.id === orderedSectionIds[index])) {
+      return active;
+    }
+    return this.repository.reorderSections(
+      projectId,
+      orderedSectionIds,
+      this.currentTime(),
+    );
+  }
+
+  async archiveSection(
+    projectId: string,
+    sectionId: string,
+  ): Promise<ProjectWriteResult<ProjectSection>> {
+    const section = await this.requireSection(sectionId);
+    this.requireProjectMatch(projectId, section.projectId);
+    if (section.isDefault) {
+      throw new ProjectDomainError('invalid_transition', 'Overview cannot be archived.');
+    }
+    if (section.status === 'archived') return { outcome: 'unchanged', value: section };
+    const updated: ProjectSection = {
+      ...section,
+      status: 'archived',
+      updatedAt: this.currentTime(),
+    };
+    await this.repository.saveSection(updated);
+    return { outcome: 'updated', value: updated };
+  }
+
+  async restoreSection(
+    projectId: string,
+    sectionId: string,
+  ): Promise<ProjectWriteResult<ProjectSection>> {
+    const section = await this.requireSection(sectionId);
+    this.requireProjectMatch(projectId, section.projectId);
+    if (section.status === 'active') return { outcome: 'unchanged', value: section };
+    const sections = await this.repository.listSections(projectId);
+    this.rejectDuplicateActiveSectionTitle(sections, section.title, section.id);
+    const updated: ProjectSection = {
+      ...section,
+      position: sections
+        .filter((value) => value.status === 'active')
+        .reduce((maximum, value) => Math.max(maximum, value.position), -1) + 1,
+      status: 'active',
+      updatedAt: this.currentTime(),
+    };
+    await this.repository.saveSection(updated);
+    return { outcome: 'updated', value: updated };
   }
 
   async updateProject(
@@ -597,6 +755,34 @@ export class ProjectService {
     return value;
   }
 
+  private createOverviewSection(projectId: string, occurredAt: string): ProjectSection {
+    return {
+      createdAt: occurredAt,
+      id: projectOverviewSectionId(projectId),
+      isDefault: true,
+      position: 0,
+      projectId,
+      status: 'active',
+      title: 'Overview',
+      updatedAt: occurredAt,
+    };
+  }
+
+  private rejectDuplicateActiveSectionTitle(
+    sections: readonly ProjectSection[],
+    title: string,
+    excludingId?: string,
+  ) {
+    if (sections.some((section) =>
+      section.id !== excludingId && section.status === 'active' &&
+      normalizedIdentity(section.title) === normalizedIdentity(title))) {
+      throw new ProjectDomainError(
+        'invalid_value',
+        'An active section with that title already exists in this Project.',
+      );
+    }
+  }
+
   private requireProjectMatch(expected: string, actual: string) {
     if (expected !== actual) {
       throw new ProjectDomainError('project_mismatch', 'The Project entity does not belong to that Project.');
@@ -611,6 +797,14 @@ export class ProjectService {
     }
 
     return task;
+  }
+
+  private async requireSection(id: string) {
+    const section = await this.repository.getSection(id);
+    if (!section) {
+      throw new ProjectDomainError('not_found', 'Project section was not found.');
+    }
+    return section;
   }
 
   private async requireWorkSession(id: string) {

@@ -19,6 +19,7 @@ type ChatsDrawerProps = {
   isOpen: boolean;
   onClose: () => void;
   onOpenFullChats: () => void;
+  onOpenProjects: () => void;
   onSelectChat: (conversationId: string) => void;
 };
 
@@ -26,6 +27,7 @@ export function ChatsDrawer({
   isOpen,
   onClose,
   onOpenFullChats,
+  onOpenProjects,
   onSelectChat,
 }: ChatsDrawerProps) {
   const { width: viewportWidth } = useWindowDimensions();
@@ -139,13 +141,24 @@ export function ChatsDrawer({
           <ChatsList compact conversations={conversations} onSelectChat={onSelectChat} />
         )}
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={onOpenFullChats}
-          style={({ pressed }) => [styles.fullChatsButton, pressed && styles.pressed]}
-        >
-          <Text style={styles.fullChatsText}>Open full Chats</Text>
-        </Pressable>
+        <View style={styles.footer}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={onOpenProjects}
+            style={({ pressed }) => [styles.footerButton, pressed && styles.pressed]}
+            testID="open-projects"
+          >
+            <Text style={styles.projectsText}>Projects</Text>
+            <Text style={styles.projectsArrow}>›</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={onOpenFullChats}
+            style={({ pressed }) => [styles.footerButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.fullChatsText}>Open full Chats</Text>
+          </Pressable>
+        </View>
       </Animated.View>
     </View>
   );
@@ -186,12 +199,19 @@ const styles = StyleSheet.create({
   error: { color: '#E39A8E', fontSize: 13, textAlign: 'center' },
   emptyTitle: { color: '#F0F0F2', fontSize: 16, fontWeight: '500' },
   emptyBody: { color: '#85858A', fontSize: 13, lineHeight: 19, marginTop: 7, textAlign: 'center' },
-  fullChatsButton: {
+  footer: {
     borderTopColor: '#242427',
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 18,
-    paddingVertical: 17,
   },
+  footerButton: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  projectsText: { color: '#EEEEF0', fontSize: 14, fontWeight: '600' },
+  projectsArrow: { color: '#6F6F75', fontSize: 20 },
   fullChatsText: { color: '#A8A8AD', fontSize: 13, fontWeight: '500' },
   pressed: { opacity: 0.55 },
 });

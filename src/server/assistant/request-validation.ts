@@ -13,6 +13,7 @@ const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_TOTAL_MESSAGE_LENGTH = 30_000;
 const MAX_CONTEXT_VALUE_LENGTH = 100;
 const MAX_SESSION_ID_LENGTH = 100;
+const MAX_PROJECT_ID_LENGTH = 200;
 
 export const ASSISTANT_REQUEST_LIMITS = {
   bodyBytes: MAX_REQUEST_BODY_BYTES,
@@ -70,6 +71,14 @@ export function isAssistantApiRequest(value: unknown): value is AssistantApiRequ
   ) {
     return false;
   }
+
+  if (
+    request.projectScope !== undefined &&
+    (!request.projectScope ||
+      typeof request.projectScope !== 'object' ||
+      !isBoundedString(request.projectScope.projectId, MAX_PROJECT_ID_LENGTH) ||
+      !isBoundedString(request.projectScope.projectName, 300))
+  ) return false;
 
   if (request.toolContinuation === undefined) {
     return true;

@@ -6,6 +6,7 @@ import type {
   ProjectKnowledgeItem,
   ProjectMilestone,
   ProjectResource,
+  ProjectSection,
   ProjectTask,
   ProjectWorkSession,
   ProjectWorkSessionEntry,
@@ -19,6 +20,7 @@ export type ProjectRepositoryChanges = {
   milestones?: ProjectMilestone[];
   projects?: Project[];
   resources?: ProjectResource[];
+  sections?: ProjectSection[];
   tasks?: ProjectTask[];
   workSessionEntries?: ProjectWorkSessionEntry[];
   workSessions?: ProjectWorkSession[];
@@ -31,6 +33,7 @@ export interface ProjectRepository {
   getKnowledgeItem(id: string): Promise<ProjectKnowledgeItem | null>;
   getMilestone(id: string): Promise<ProjectMilestone | null>;
   getProject(id: string): Promise<Project | null>;
+  getSection(id: string): Promise<ProjectSection | null>;
   getTask(id: string): Promise<ProjectTask | null>;
   getWorkSession(id: string): Promise<ProjectWorkSession | null>;
   listChangeEvents(projectId: string): Promise<ProjectChangeEvent[]>;
@@ -40,6 +43,7 @@ export interface ProjectRepository {
   listMilestones(projectId: string): Promise<ProjectMilestone[]>;
   listProjects(limit?: number): Promise<Project[]>;
   listResources(projectId: string): Promise<ProjectResource[]>;
+  listSections(projectId: string): Promise<ProjectSection[]>;
   listTasks(projectId: string, limit?: number): Promise<ProjectTask[]>;
   listWorkSessionEntries(sessionId: string): Promise<ProjectWorkSessionEntry[]>;
   listWorkSessions(projectId: string, limit?: number): Promise<ProjectWorkSession[]>;
@@ -49,8 +53,14 @@ export interface ProjectRepository {
   saveMilestone(milestone: ProjectMilestone): Promise<void>;
   saveProject(project: Project): Promise<void>;
   saveResource(resource: ProjectResource): Promise<void>;
+  saveSection(section: ProjectSection): Promise<void>;
   saveTask(task: ProjectTask): Promise<void>;
   saveWorkSession(session: ProjectWorkSession): Promise<void>;
   saveWorkSessionEntry(entry: ProjectWorkSessionEntry): Promise<void>;
   saveAtomically(changes: ProjectRepositoryChanges): Promise<void>;
+  reorderSections(
+    projectId: string,
+    sectionIds: readonly string[],
+    updatedAt: string,
+  ): Promise<ProjectSection[]>;
 }

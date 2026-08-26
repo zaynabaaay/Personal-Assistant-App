@@ -31,6 +31,7 @@ export type AssistantModelResult =
 
 export type OpenAIAssistantProviderOptions = {
   apiKey: string;
+  disabledToolNames?: readonly string[];
   fetchImplementation: typeof fetch;
   model: string;
   signal: AbortSignal;
@@ -50,6 +51,15 @@ export class OpenAIAssistantProviderError extends Error {
 
 export function createAssistantInstructions(request: AssistantRequest) {
   const { context } = request;
+  const projectScopeInstructions = request.projectScope ? [
+    'The user is currently inside one explicit Project workspace. Treat every turn in this request as scoped to that Project unless the user clearly asks to leave or discuss something unrelated.',
+    `Selected Project ID: ${request.projectScope.projectId}`,
+    `Selected Project name: ${request.projectScope.projectName}`,
+    'Do not ask for the Project name or ask whether this should be a Project. Use get_project_context with the selected Project ID whenever current Project truth could affect the answer.',
+    'Never silently substitute another Project. Any Project read or write implied by “this Project,” “here,” or an unqualified Project item must use the selected Project ID.',
+    'For ambiguous work questions inside this workspace, the selected Project is the default semantic frame. Its verified Project context outranks unrelated earlier assistant replies, general memory, and other Projects.',
+    'The selected Project ID is routing context, not proof of ownership or existence; tool results remain authoritative.',
+  ] : [];
 
   return [
     'You are Tina, an ongoing personal assistant. Respond as part of the conversation, not as a polished standalone memo.',
@@ -78,6 +88,7 @@ export function createAssistantInstructions(request: AssistantRequest) {
     `Local time: ${context.currentLocalTime}`,
     `Weekday: ${context.dayOfWeek}`,
     `Timezone: ${context.timezone}`,
+    ...projectScopeInstructions,
     'Tools provide factual application data and may execute on the client or server.',
     'Use tools only when their data is needed for the current request. Do not narrate tool selection or retrieval unless a limitation affects the answer.',
     'Keep source provenance clear. Current accepted Project state is authoritative for current decisions, facts, tasks, and questions. Completed conversations are historical evidence of what the user or Tina previously said or explored. Your present interpretation is inference or opinion. Never blur those sources.',
@@ -186,7 +197,10 @@ function extractOutputText(response: OpenAIResponse) {
     .join('\n'));
 }
 
-function extractToolCalls(response: OpenAIResponse): AssistantToolCall[] | null {
+function extractToolCalls(
+  response: OpenAIResponse,
+  enabledToolNames: ReadonlySet<string>,
+): AssistantToolCall[] | null {
   const rawCalls = (response.output ?? []).filter(
     (item) => item.type === 'function_call',
   );
@@ -206,6 +220,7 @@ function extractToolCalls(response: OpenAIResponse): AssistantToolCall[] | null 
 
     if (
       !contract ||
+      !enabledToolNames.has(contract.name) ||
       typeof rawCall.call_id !== 'string' ||
       rawCall.call_id.length < 1 ||
       rawCall.call_id.length > 100 ||
@@ -244,6 +259,11 @@ export async function requestOpenAIAssistant(
   steps: readonly AssistantToolStep[],
   options: OpenAIAssistantProviderOptions,
 ): Promise<AssistantModelResult> {
+  const disabledToolNames = new Set(options.disabledToolNames ?? []);
+  const enabledContracts = ASSISTANT_TOOL_CONTRACTS.filter(
+    (contract) => !disabledToolNames.has(contract.name),
+  );
+  const enabledToolNames = new Set(enabledContracts.map((contract) => contract.name));
   const response = await options.fetchImplementation(
     'https://api.openai.com/v1/responses',
     {
@@ -256,7 +276,7 @@ export async function requestOpenAIAssistant(
         store: false,
         text: { verbosity: 'low' },
         tool_choice: 'auto',
-        tools: ASSISTANT_TOOL_CONTRACTS.map((contract) => ({
+        tools: enabledContracts.map((contract) => ({
           ...contract.openAI,
           name: contract.name,
         })),
@@ -282,7 +302,7 @@ export async function requestOpenAIAssistant(
     );
   }
 
-  const toolCalls = extractToolCalls(body);
+  const toolCalls = extractToolCalls(body, enabledToolNames);
 
   if (toolCalls === null) {
     throw new OpenAIAssistantProviderError(
