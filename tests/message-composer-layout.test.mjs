@@ -7,6 +7,7 @@ import {
   MESSAGE_INPUT_MIN_HEIGHT,
   messageInputHeight,
   messageInputScrollEnabled,
+  messageSendEnabled,
 } from '../src/features/home/message-composer-layout.ts';
 
 test('the composer grows with wrapped content, caps its height, and then scrolls', () => {
@@ -18,11 +19,31 @@ test('the composer grows with wrapped content, caps its height, and then scrolls
   assert.equal(messageInputScrollEnabled(MESSAGE_INPUT_MAX_HEIGHT), true);
 });
 
+test('send availability distinguishes empty, ready, and in-flight composer states', () => {
+  const idle = {
+    isFinishing: false,
+    isResponding: false,
+    isRestoring: false,
+    isSavingMessage: false,
+  };
+  assert.equal(messageSendEnabled('', idle), false);
+  assert.equal(messageSendEnabled('   ', idle), false);
+  assert.equal(messageSendEnabled('Ready to send', idle), true);
+  assert.equal(messageSendEnabled('No duplicate', { ...idle, isSavingMessage: true }), false);
+  assert.equal(messageSendEnabled('Wait for Tina', { ...idle, isResponding: true }), false);
+});
+
 test('the shared composer measures controlled text independently of native input events', async () => {
-  const source = await readFile(new URL(
-    '../src/features/home/home-screen.tsx',
-    import.meta.url,
-  ), 'utf8');
+  const [source, homeSource] = await Promise.all([
+    readFile(new URL(
+      '../src/features/home/message-composer.tsx',
+      import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../src/features/home/home-screen.tsx',
+      import.meta.url,
+    ), 'utf8'),
+  ]);
   const inputStart = source.indexOf('<TextInput');
   const inputSource = source.slice(inputStart, source.indexOf('/>', inputStart));
 
@@ -37,6 +58,9 @@ test('the shared composer measures controlled text independently of native input
   assert.match(source, /width: '100%'/);
   assert.match(source, /scrollEnabled=\{messageInputScrollEnabled\(inputHeight\)\}/);
   assert.match(source, /disabled=\{!canSend\}/);
+  assert.match(source, /accessibilityState=\{\{ busy: isBusy, disabled: !canSend \}\}/);
   assert.match(source, /onPress=\{onSend\}/);
-  assert.match(source, /<KeyboardAvoidingView behavior=\{KEYBOARD_AVOIDING_BEHAVIOR\}/);
+  assert.doesNotMatch(inputSource, /placeholder=/);
+  assert.match(homeSource, /<KeyboardAvoidingView[\s\S]*behavior=\{KEYBOARD_AVOIDING_BEHAVIOR\}/);
+  assert.match(homeSource, /keyboardVerticalOffset=\{0\}/);
 });

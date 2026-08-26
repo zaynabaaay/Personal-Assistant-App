@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import {
   ActivityIndicator,
   Alert,
@@ -82,6 +83,7 @@ export default function CompletedConversationScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <StatusBar style="light" />
       <View style={styles.header}>
         <Pressable
           accessibilityLabel="Back to Chats"
@@ -102,7 +104,7 @@ export default function CompletedConversationScreen() {
           </Text>
         </View>
       ) : loading ? (
-        <View style={styles.centered}><ActivityIndicator color="#77736B" /></View>
+        <View style={styles.centered}><ActivityIndicator color="#8F8F95" /></View>
       ) : error || !record ? (
         <View style={styles.centered}>
           <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text>
@@ -150,7 +152,7 @@ export default function CompletedConversationScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: '#F5F4F0', flex: 1 },
+  safeArea: { backgroundColor: '#050505', flex: 1 },
   header: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -158,19 +160,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 18,
   },
-  back: { color: '#716D65', fontSize: 14 },
-  headerTitle: { color: '#34332F', fontSize: 17, fontWeight: '600' },
+  back: { color: '#A1A1A6', fontSize: 14 },
+  headerTitle: { color: '#F7F7F8', fontSize: 17, fontWeight: '600' },
   headerSpacer: { width: 32 },
   centered: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: 32 },
-  error: { color: '#8B5E52', fontSize: 14, textAlign: 'center' },
+  error: { color: '#E39A8E', fontSize: 14, textAlign: 'center' },
   content: { paddingBottom: 48, paddingHorizontal: 30, paddingTop: 18 },
-  title: { color: '#34332F', fontSize: 24, fontWeight: '600', lineHeight: 31 },
-  date: { color: '#96938B', fontSize: 12, marginTop: 7 },
-  summary: { color: '#66635C', fontSize: 15, lineHeight: 22, marginTop: 16 },
+  title: { color: '#F7F7F8', fontSize: 24, fontWeight: '600', lineHeight: 31 },
+  date: { color: '#85858A', fontSize: 12, marginTop: 7 },
+  summary: { color: '#B3B3B7', fontSize: 15, lineHeight: 22, marginTop: 16 },
   transcript: { marginTop: 34 },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#EAE8E3',
+    backgroundColor: '#242426',
     borderRadius: 16,
     marginTop: 20,
     maxWidth: '82%',
@@ -178,11 +180,11 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   assistantMessage: { alignSelf: 'flex-start', marginTop: 24, maxWidth: '92%' },
-  role: { color: '#96938B', fontSize: 11, fontWeight: '600', marginBottom: 4 },
-  messageText: { color: '#44423D', fontSize: 16, lineHeight: 24 },
-  messageTime: { color: '#9C9991', fontSize: 10, marginTop: 6 },
+  role: { color: '#85858A', fontSize: 11, fontWeight: '600', marginBottom: 4 },
+  messageText: { color: '#F0F0F2', fontSize: 16, lineHeight: 24 },
+  messageTime: { color: '#747479', fontSize: 10, marginTop: 6 },
   deleteButton: { alignSelf: 'center', marginTop: 46, padding: 12 },
-  deleteText: { color: '#9B5D52', fontSize: 14 },
-  deleteError: { color: '#8B5E52', fontSize: 13, textAlign: 'center' },
+  deleteText: { color: '#E58878', fontSize: 14 },
+  deleteError: { color: '#E39A8E', fontSize: 13, textAlign: 'center' },
   pressed: { opacity: 0.55 },
 });

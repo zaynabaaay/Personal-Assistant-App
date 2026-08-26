@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { type Href, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import {
+  Animated,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -8,12 +10,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { ActiveConversation, ConversationMessage } from '@/domain/conversations';
+import { useReducedMotion } from '@/features/accessibility/use-reduced-motion';
 import { useAuth } from '@/features/auth/auth-provider';
 import { assistantService } from '@/services/assistant/assistant-service';
 import {
@@ -27,18 +29,19 @@ import {
 import { processConversationMemory } from '@/services/memory';
 
 import {
-  MESSAGE_INPUT_MAX_HEIGHT,
   MESSAGE_INPUT_MIN_HEIGHT,
   messageInputHeight,
-  messageInputScrollEnabled,
+  messageSendEnabled,
 } from './message-composer-layout';
+import { ChatsDrawer } from './chats-drawer';
+import { MessageComposer } from './message-composer';
 import { useVisibleViewport } from './use-visible-viewport';
 
 type HomeHeaderProps = {
-  onFinish: () => void;
-  onOpenChats: () => void;
+  canStartNewChat: boolean;
   isFinishing: boolean;
-  showFinish: boolean;
+  onNewChat: () => void;
+  onOpenDrawer: () => void;
 };
 
 type ConversationProps = {
@@ -46,89 +49,46 @@ type ConversationProps = {
   messages: ConversationMessage[];
 };
 
-type MessageComposerProps = {
-  canSend: boolean;
-  draft: string;
-  inputHeight: number;
-  isFocused: boolean;
-  isListening: boolean;
-  onBlur: () => void;
-  onChangeText: (text: string) => void;
-  onFocus: () => void;
-  onInputHeightChange: (height: number) => void;
-  onSend: () => void;
-  onToggleListening: () => void;
-};
-
-const MICROPHONE_ACTIVE_COLOR = '#8B5E52';
+const TINA_ACCENT = '#8AB4F8';
 const KEYBOARD_AVOIDING_BEHAVIOR =
   Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined;
-const WEB_HYDRATION_PROPS =
-  Platform.OS === 'web' ? { suppressHydrationWarning: true } : {};
-const TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  hour: 'numeric',
-  minute: '2-digit',
-});
-const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  day: 'numeric',
-  month: 'long',
-  weekday: 'long',
-});
-
-function useCurrentDate() {
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  return now;
-}
-
 function HomeHeader({
+  canStartNewChat,
   isFinishing,
-  onFinish,
-  onOpenChats,
-  showFinish,
+  onNewChat,
+  onOpenDrawer,
 }: HomeHeaderProps) {
-  const now = useCurrentDate();
-
   return (
     <View style={styles.header} testID="home-header">
-      <View>
-        <Text {...WEB_HYDRATION_PROPS} style={styles.time}>
-          {TIME_FORMATTER.format(now)}
-        </Text>
-        <Text {...WEB_HYDRATION_PROPS} style={styles.date}>
-          {DATE_FORMATTER.format(now)}
-        </Text>
-      </View>
+      <Pressable
+        accessibilityLabel="Open Chats drawer"
+        accessibilityRole="button"
+        hitSlop={10}
+        onPress={onOpenDrawer}
+        style={({ pressed }) => [styles.headerIconButton, pressed && styles.pressed]}
+        testID="open-chats-drawer"
+      >
+        <View style={styles.menuIcon}>
+          <View style={styles.menuLine} />
+          <View style={[styles.menuLine, styles.menuLineShort]} />
+        </View>
+      </Pressable>
 
-      <View style={styles.headerActions}>
-        <Pressable
-          accessibilityLabel="Open saved chats"
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={onOpenChats}
-          style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
-        >
-          <Text style={styles.headerButtonText}>Chats</Text>
-        </Pressable>
+      <Text style={styles.headerTitle}>Tina</Text>
 
-        {showFinish ? (
-          <Pressable
-            accessibilityLabel="Finish conversation"
-            accessibilityRole="button"
-            disabled={isFinishing}
-            hitSlop={10}
-            onPress={onFinish}
-            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.finishText}>{isFinishing ? 'Saving…' : 'Finish'}</Text>
-          </Pressable>
-        ) : null}
-      </View>
+      <Pressable
+        accessibilityLabel="Start a new chat"
+        accessibilityRole="button"
+        disabled={!canStartNewChat}
+        hitSlop={8}
+        onPress={onNewChat}
+        style={({ pressed }) => [styles.newChatButton, pressed && canStartNewChat && styles.pressed]}
+        testID="new-chat-button"
+      >
+        <Text style={[styles.newChatText, !canStartNewChat && styles.newChatTextDisabled]}>
+          {isFinishing ? 'Saving…' : 'New Chat'}
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -163,109 +123,50 @@ function Conversation({ isResponding, messages }: ConversationProps) {
         <MessageItem key={message.id} message={message} />
       ))}
 
-      {isResponding ? (
-        <View style={styles.assistantMessage}>
-          <Text accessibilityLiveRegion="polite" style={styles.assistantMessageText}>
-            Responding…
-          </Text>
-        </View>
-      ) : null}
+      {isResponding ? <ThinkingIndicator /> : null}
     </ScrollView>
   );
 }
 
-function MicrophoneIcon({ active }: { active: boolean }) {
+function ThinkingIndicator() {
+  const [progress] = useState(() => new Animated.Value(0));
+  const reducedMotion = useReducedMotion();
+
+  useEffect(() => {
+    if (reducedMotion) {
+      progress.setValue(0.5);
+      return;
+    }
+    const animation = Animated.loop(Animated.timing(progress, {
+      duration: 1050,
+      toValue: 1,
+      useNativeDriver: true,
+    }));
+    animation.start();
+    return () => animation.stop();
+  }, [progress, reducedMotion]);
+
   return (
-    <View style={styles.micIcon}>
-      <View style={[styles.micCapsule, active && styles.micCapsuleActive]} />
-      <View style={[styles.micArc, active && styles.micArcActive]} />
-      <View style={[styles.micStem, active && styles.micStemActive]} />
-      <View style={[styles.micBase, active && styles.micBaseActive]} />
-    </View>
-  );
-}
-
-function MessageComposer({
-  canSend,
-  draft,
-  inputHeight,
-  isFocused,
-  isListening,
-  onBlur,
-  onChangeText,
-  onFocus,
-  onInputHeightChange,
-  onSend,
-  onToggleListening,
-}: MessageComposerProps) {
-  return (
-    <View style={styles.composerShell} testID="composer-shell">
-      {isListening ? <Text style={styles.listeningLabel}>Listening…</Text> : null}
-
-      <View style={[styles.composer, isFocused && styles.composerFocused]}>
-        <View style={styles.inputFrame}>
-          <Text
-            accessibilityElementsHidden
-            accessible={false}
-            importantForAccessibility="no-hide-descendants"
-            onLayout={({ nativeEvent }) => onInputHeightChange(nativeEvent.layout.height)}
-            pointerEvents="none"
-            style={styles.inputSizer}
-          >
-            {draft || ' '}
-          </Text>
-          <TextInput
-            accessibilityLabel="Message"
-            maxLength={1000}
-            multiline
-            onBlur={onBlur}
-            onChangeText={(text) => {
-              onChangeText(text);
-              if (text.length === 0) onInputHeightChange(MESSAGE_INPUT_MIN_HEIGHT);
-            }}
-            onFocus={onFocus}
-            placeholder={isListening ? 'Listening…' : 'Ask anything…'}
-            placeholderTextColor="#8B8983"
-            returnKeyType="default"
-            scrollEnabled={messageInputScrollEnabled(inputHeight)}
-            style={[
-              styles.input,
-              Platform.OS === 'web' && styles.inputWeb,
-              { height: inputHeight },
-            ]}
-            testID="message-input"
-            value={draft}
-          />
-        </View>
-
-        <Pressable
-          accessibilityLabel={isListening ? 'Stop listening' : 'Start voice input'}
-          accessibilityRole="button"
-          onPress={onToggleListening}
-          style={({ pressed }) => [
-            styles.controlButton,
-            isListening && styles.iconButtonActive,
-            pressed && styles.pressed,
+    <View
+      accessibilityLabel="Tina is thinking"
+      accessibilityLiveRegion="polite"
+      style={styles.thinkingIndicator}
+      testID="thinking-indicator"
+    >
+      {[0, 1, 2].map((index) => (
+        <Animated.View
+          key={index}
+          style={[
+            styles.thinkingDot,
+            {
+              opacity: reducedMotion ? 0.55 : progress.interpolate({
+                inputRange: [0, 0.08 + index * 0.18, 0.38 + index * 0.18, 1],
+                outputRange: [0.25, 0.25, 0.9, 0.25],
+              }),
+            },
           ]}
-        >
-          <MicrophoneIcon active={isListening} />
-        </Pressable>
-
-        <Pressable
-          accessibilityLabel="Send message"
-          accessibilityRole="button"
-          disabled={!canSend}
-          onPress={onSend}
-          style={({ pressed }) => [
-            styles.controlButton,
-            styles.sendButton,
-            !canSend && styles.sendButtonDisabled,
-            pressed && canSend && styles.sendButtonPressed,
-          ]}
-        >
-          <Text style={[styles.sendArrow, !canSend && styles.sendArrowDisabled]}>↑</Text>
-        </Pressable>
-      </View>
+        />
+      ))}
     </View>
   );
 }
@@ -276,8 +177,8 @@ export default function HomeScreen() {
   const visibleViewport = useVisibleViewport();
   const [draft, setDraft] = useState('');
   const [inputHeight, setInputHeight] = useState(MESSAGE_INPUT_MIN_HEIGHT);
-  const [isFocused, setIsFocused] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
@@ -293,8 +194,14 @@ export default function HomeScreen() {
   );
   const activeRequestId = useRef(0);
   const messages = activeConversation.messages;
-  const canSend = draft.trim().length > 0 && !isResponding && !isFinishing &&
-    !isRestoring && !isSavingMessage;
+  const canSend = messageSendEnabled(draft, {
+    isFinishing,
+    isResponding,
+    isRestoring,
+    isSavingMessage,
+  });
+  const canStartNewChat = messages.length > 0 && !isResponding && !isFinishing &&
+    !isSavingMessage && !isRestoring && !persistenceError;
 
   useEffect(() => {
     let mounted = true;
@@ -513,7 +420,6 @@ export default function HomeScreen() {
     setPersistenceError(null);
     if (user?.id) void activeConversationOutbox.clear(user.id);
     resetComposer();
-    setIsFocused(false);
     setIsResponding(false);
     Keyboard.dismiss();
   };
@@ -585,13 +491,21 @@ export default function HomeScreen() {
       ]}
       testID="home-screen"
     >
-      <KeyboardAvoidingView behavior={KEYBOARD_AVOIDING_BEHAVIOR} style={styles.keyboardView}>
+      <StatusBar style="light" />
+      <KeyboardAvoidingView
+        behavior={KEYBOARD_AVOIDING_BEHAVIOR}
+        keyboardVerticalOffset={0}
+        style={styles.keyboardView}
+        testID="home-keyboard-layout"
+      >
         <HomeHeader
+          canStartNewChat={canStartNewChat}
           isFinishing={isFinishing}
-          onFinish={finishConversation}
-          onOpenChats={() => router.push('/history' as Href)}
-          showFinish={messages.length > 0 && !isResponding && !isSavingMessage &&
-            !isRestoring && !persistenceError}
+          onNewChat={finishConversation}
+          onOpenDrawer={() => {
+            Keyboard.dismiss();
+            setDrawerOpen(true);
+          }}
         />
         {finishError ? (
           <Text accessibilityLiveRegion="assertive" style={styles.finishError}>
@@ -630,17 +544,27 @@ export default function HomeScreen() {
           canSend={canSend}
           draft={draft}
           inputHeight={inputHeight}
-          isFocused={isFocused}
+          isBusy={isSavingMessage || isResponding}
           isListening={isListening}
-          onBlur={() => setIsFocused(false)}
           onChangeText={setDraft}
-          onFocus={() => {
-            setIsFocused(true);
-            setIsListening(false);
-          }}
           onInputHeightChange={(height) => setInputHeight(messageInputHeight(height))}
           onSend={sendMessage}
           onToggleListening={toggleListening}
+        />
+        <ChatsDrawer
+          isOpen={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          onOpenFullChats={() => {
+            setDrawerOpen(false);
+            router.push('/history' as Href);
+          }}
+          onSelectChat={(conversationId) => {
+            setDrawerOpen(false);
+            router.push({
+              pathname: '/history/[id]',
+              params: { id: conversationId },
+            } as unknown as Href);
+          }}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -648,265 +572,81 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    backgroundColor: '#F5F4F0',
-    flex: 1,
-  },
+  safeArea: { backgroundColor: '#050505', flex: 1 },
   safeAreaWeb: {
     left: 0,
     overflow: 'hidden',
     position: 'absolute',
     right: 0,
   },
-  keyboardView: {
-    flex: 1,
-  },
+  keyboardView: { flex: 1, position: 'relative' },
   header: {
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    borderBottomColor: '#171719',
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 30,
-    paddingTop: 24,
+    minHeight: 54,
+    paddingHorizontal: 12,
   },
-  time: {
-    color: '#34332F',
-    fontSize: 22,
-    fontWeight: '500',
-    letterSpacing: -0.5,
-    lineHeight: 27,
+  headerIconButton: { alignItems: 'center', height: 44, justifyContent: 'center', width: 44 },
+  menuIcon: { gap: 6, width: 20 },
+  menuLine: { backgroundColor: '#E8E8EA', borderRadius: 1, height: 1.5, width: 20 },
+  menuLineShort: { width: 14 },
+  headerTitle: { color: '#F7F7F8', fontSize: 17, fontWeight: '600', letterSpacing: -0.2 },
+  newChatButton: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 72,
+    paddingHorizontal: 4,
   },
-  date: {
-    color: '#96938B',
-    fontSize: 12,
-    letterSpacing: 0.1,
-    marginTop: 5,
-  },
-  headerActions: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 14,
-  },
-  headerButton: {
-    paddingHorizontal: 1,
-    paddingVertical: 7,
-  },
-  headerButtonText: {
-    color: '#908D85',
-    fontSize: 12,
-    letterSpacing: 0.1,
-  },
-  finishText: {
-    color: '#625D55',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.1,
-  },
-  finishError: {
-    color: '#8B5E52',
-    fontSize: 12,
-    marginHorizontal: 30,
-    marginTop: 16,
-  },
-  completionNotice: {
-    color: '#65705D',
-    fontSize: 12,
-    marginHorizontal: 30,
-    marginTop: 16,
-  },
-  persistenceNotice: {
-    alignItems: 'flex-start',
-  },
+  newChatText: { color: TINA_ACCENT, fontSize: 13, fontWeight: '600' },
+  newChatTextDisabled: { color: '#55555A' },
+  finishError: { color: '#E39A8E', fontSize: 12, marginHorizontal: 22, marginTop: 12 },
+  completionNotice: { color: '#8F9A88', fontSize: 12, marginHorizontal: 22, marginTop: 12 },
+  persistenceNotice: { alignItems: 'flex-start' },
   retryText: {
-    color: '#625D55',
+    color: '#B8B8BC',
     fontSize: 12,
     fontWeight: '600',
-    marginHorizontal: 30,
+    marginHorizontal: 22,
     marginTop: 8,
   },
-  conversation: {
-    flex: 1,
-    marginTop: 24,
-  },
+  conversation: { flex: 1 },
   conversationContent: {
     flexGrow: 1,
     justifyContent: 'flex-end',
-    paddingBottom: 48,
-    paddingHorizontal: 30,
-    paddingTop: 64,
+    paddingBottom: 28,
+    paddingHorizontal: 20,
+    paddingTop: 24,
   },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#EAE8E3',
-    borderRadius: 16,
-    marginTop: 22,
-    maxWidth: '78%',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    backgroundColor: '#242426',
+    borderRadius: 18,
+    marginTop: 20,
+    maxWidth: '82%',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
   },
-  userMessageText: {
-    color: '#3D3B36',
-    fontSize: 15,
-    lineHeight: 21,
-  },
-  assistantMessage: {
-    alignSelf: 'flex-start',
-    marginTop: 26,
-    maxWidth: '90%',
-  },
+  userMessageText: { color: '#F4F4F5', fontSize: 16, lineHeight: 23 },
+  assistantMessage: { alignSelf: 'flex-start', marginTop: 25, maxWidth: '94%' },
   assistantMessageText: {
-    color: '#44423D',
-    fontSize: 18,
-    letterSpacing: -0.15,
-    lineHeight: 28,
+    color: '#F4F4F5',
+    fontSize: 17,
+    letterSpacing: -0.1,
+    lineHeight: 27,
   },
-  composerShell: {
-    paddingBottom: 14,
-    paddingHorizontal: 18,
-  },
-  listeningLabel: {
-    color: '#8B6C62',
-    fontSize: 12,
-    marginBottom: 8,
-    marginLeft: 14,
-  },
-  composer: {
-    alignItems: 'flex-end',
-    backgroundColor: '#FBFAF8',
-    borderColor: '#E7E4DE',
-    borderRadius: 25,
-    borderWidth: StyleSheet.hairlineWidth,
-    boxShadow: '0 2px 8px rgba(41, 39, 34, 0.035)',
+  thinkingIndicator: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
     flexDirection: 'row',
-    minHeight: 50,
-    paddingBottom: 5,
-    paddingLeft: 17,
-    paddingRight: 5,
-    paddingTop: 5,
+    gap: 5,
+    height: 28,
+    marginTop: 22,
+    paddingHorizontal: 2,
   },
-  composerFocused: {
-    backgroundColor: '#FEFDFB',
-    borderColor: '#D8D4CC',
-  },
-  input: {
-    color: '#33312D',
-    fontSize: 15,
-    lineHeight: 21,
-    maxHeight: MESSAGE_INPUT_MAX_HEIGHT,
-    minHeight: MESSAGE_INPUT_MIN_HEIGHT,
-    outlineColor: 'transparent',
-    outlineStyle: 'solid',
-    outlineWidth: 0,
-    paddingBottom: 8,
-    paddingLeft: 0,
-    paddingRight: 8,
-    paddingTop: 8,
-    textAlignVertical: 'top',
-    width: '100%',
-  },
-  inputFrame: {
-    flex: 1,
-    minWidth: 0,
-    position: 'relative',
-  },
-  inputSizer: {
-    fontSize: 15,
-    left: 0,
-    lineHeight: 21,
-    opacity: 0,
-    paddingBottom: 8,
-    paddingLeft: 0,
-    paddingRight: 8,
-    paddingTop: 8,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-  inputWeb: {
-    fontSize: 16,
-  },
-  controlButton: {
-    alignItems: 'center',
-    borderRadius: 20,
-    height: 40,
-    justifyContent: 'center',
-    width: 40,
-  },
-  iconButtonActive: {
-    backgroundColor: '#F1E9E6',
-  },
-  micIcon: {
-    alignItems: 'center',
-    height: 22,
-    justifyContent: 'flex-start',
-    width: 18,
-  },
-  micCapsule: {
-    borderColor: '#5F5D58',
-    borderRadius: 5,
-    borderWidth: 1.5,
-    height: 11,
-    width: 7,
-  },
-  micCapsuleActive: {
-    borderColor: MICROPHONE_ACTIVE_COLOR,
-  },
-  micArc: {
-    borderBottomColor: '#5F5D58',
-    borderBottomLeftRadius: 7,
-    borderBottomRightRadius: 7,
-    borderBottomWidth: 1.5,
-    borderLeftColor: '#5F5D58',
-    borderLeftWidth: 1.5,
-    borderRightColor: '#5F5D58',
-    borderRightWidth: 1.5,
-    height: 8,
-    marginTop: -5,
-    width: 13,
-  },
-  micArcActive: {
-    borderBottomColor: MICROPHONE_ACTIVE_COLOR,
-    borderLeftColor: MICROPHONE_ACTIVE_COLOR,
-    borderRightColor: MICROPHONE_ACTIVE_COLOR,
-  },
-  micStem: {
-    backgroundColor: '#5F5D58',
-    height: 3,
-    width: 1.5,
-  },
-  micStemActive: {
-    backgroundColor: MICROPHONE_ACTIVE_COLOR,
-  },
-  micBase: {
-    backgroundColor: '#5F5D58',
-    borderRadius: 1,
-    height: 1.5,
-    width: 7,
-  },
-  micBaseActive: {
-    backgroundColor: MICROPHONE_ACTIVE_COLOR,
-  },
-  sendButton: {
-    backgroundColor: '#D2CEC6',
-    marginLeft: 3,
-  },
-  sendButtonDisabled: {
-    backgroundColor: '#ECE9E3',
-  },
-  sendButtonPressed: {
-    backgroundColor: '#C5C0B7',
-    transform: [{ scale: 0.96 }],
-  },
-  sendArrow: {
-    color: '#4E4B45',
-    fontSize: 22,
-    fontWeight: '500',
-    lineHeight: 24,
-    marginTop: -2,
-  },
-  sendArrowDisabled: {
-    color: '#AAA69E',
-  },
-  pressed: {
-    opacity: 0.55,
-  },
+  thinkingDot: { backgroundColor: '#929297', borderRadius: 3, height: 6, width: 6 },
+  pressed: { opacity: 0.55 },
 });

@@ -22,7 +22,7 @@ function AuthenticatedRouter() {
     <Stack
       screenOptions={{
         animation: 'fade',
-        contentStyle: { backgroundColor: '#F5F4F0' },
+        contentStyle: { backgroundColor: '#050505' },
         headerShown: false,
       }}
     />
