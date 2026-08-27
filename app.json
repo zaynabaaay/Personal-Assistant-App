@@ -1,0 +1,78 @@
+{
+  "expo": {
+    "name": "Personal Assistant",
+    "slug": "personal-assistant-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "personalassistant",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "com.zaynabaaay.personalassistant",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#F5F4F0",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "blockedPermissions": [
+        "android.permission.WRITE_CALENDAR"
+      ],
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F5F4F0",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 88
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Allow Personal Assistant to read your calendar events.",
+          "remindersPermission": false,
+          "writeOnlyAccess": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": false,
+          "microphonePermission": false,
+          "photosPermission": "Allow Personal Assistant to select images for your Projects."
+        }
+      ],
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "baseUrl": "/Personal-Assistant-App",
+      "typedRoutes": true
+    },
+    "owner": "zaynabaaay",
+    "extra": {
+      "eas": {
+        "projectId": "6298135d-7aa1-43c0-8b2d-11fd29d572b6"
+      },
+      "router": {}
+    }
+  }
+}
