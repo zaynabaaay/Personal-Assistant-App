@@ -45,6 +45,91 @@ export type PickedProjectAsset = {
   width?: number;
 };
 
+export type ProjectDocumentPickerResult = {
+  assets: null | { mimeType?: string; name: string; size?: number; uri: string }[];
+  canceled: boolean;
+};
+
+export type ProjectDocumentPickerOutcome =
+  | { status: 'cancelled' }
+  | { status: 'selected'; selection: PickedProjectAsset }
+  | { status: 'suppressed' };
+
+export type ProjectDocumentPickerState = { nativePickerActive: boolean };
+
+export function pickedProjectDocumentFromResult(result: ProjectDocumentPickerResult, platform: string) {
+  if (result.canceled) return null;
+  const asset = result.assets?.[0];
+  if (!asset) throw new Error('The document picker returned no file.');
+  return {
+    mimeType: asset.mimeType, name: asset.name, size: asset.size,
+    source: platform === 'web' ? 'web-file-picker' : 'document-picker', uri: asset.uri,
+  } satisfies PickedProjectAsset;
+}
+
+export function createProjectDocumentPicker(options: {
+  getDocument: (configuration: {
+    copyToCacheDirectory: boolean;
+    multiple: false;
+    type: string[];
+  }) => Promise<ProjectDocumentPickerResult>;
+  onDiagnostic?: (cause: unknown) => void;
+  platform: string;
+}, state: ProjectDocumentPickerState = { nativePickerActive: false }) {
+  return async (): Promise<ProjectDocumentPickerOutcome> => {
+    if (state.nativePickerActive) return { status: 'suppressed' };
+    state.nativePickerActive = true;
+    try {
+      const result = await options.getDocument({
+        copyToCacheDirectory: true,
+        multiple: false,
+        type: [
+          'application/pdf', 'application/msword', 'application/rtf', 'application/vnd.ms-excel',
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain',
+        ],
+      });
+      const selection = pickedProjectDocumentFromResult(result, options.platform);
+      return selection ? { selection, status: 'selected' } : { status: 'cancelled' };
+    } catch (cause) {
+      options.onDiagnostic?.(cause);
+      throw new Error('Couldn’t open the file picker. Please try again.');
+    } finally {
+      state.nativePickerActive = false;
+    }
+  };
+}
+
+export async function runProjectDocumentPickerFlow<T>(options: {
+  onError: (message: string | null) => void;
+  pick: () => Promise<ProjectDocumentPickerOutcome>;
+  upload: (selection: PickedProjectAsset) => Promise<T>;
+}) {
+  options.onError(null);
+  try {
+    const outcome = await options.pick();
+    if (outcome.status !== 'selected') return outcome.status;
+    await options.upload(outcome.selection);
+    return 'uploaded' as const;
+  } catch (cause) {
+    options.onError(cause instanceof Error ? cause.message : 'Couldn’t open the file picker. Please try again.');
+    return 'failed' as const;
+  }
+}
+
+export async function loadProjectAssetSelectionBinary(selection: PickedProjectAsset, options: {
+  fetchBinary: (uri: string) => Promise<ArrayBuffer>;
+  platform: string;
+  readNativeFile: (uri: string) => Promise<ArrayBuffer>;
+}) {
+  if (options.platform !== 'web' && selection.source === 'document-picker') {
+    return options.readNativeFile(selection.uri);
+  }
+  return options.fetchBinary(selection.uri);
+}
+
 export type ProjectAssetStorage = {
   createSignedUrl(path: string): Promise<{ expiresAt: number; url: string }>;
   remove(path: string): Promise<void>;
@@ -55,7 +140,6 @@ export type ProjectAssetSignedUrl = { expiresAt: number; url: string };
 
 type OpenProjectAssetOriginalOptions = {
   asset: ProjectAsset;
-  canOpenUrl: (url: string) => Promise<boolean>;
   getSignedUrl: (asset: ProjectAsset, force?: boolean) => Promise<ProjectAssetSignedUrl>;
   invalidateSignedUrl: (assetId: string) => void;
   onBusyChange: (busy: boolean) => void;
@@ -72,23 +156,16 @@ export function isProjectAssetSignedUrlFresh(
 }
 
 export async function openProjectAssetOriginal(options: OpenProjectAssetOriginalOptions) {
-  const openSignedUrl = async (url: string) => {
-    if (!await options.canOpenUrl(url)) {
-      throw new Error('No app is available to open this file.');
-    }
-    await options.openUrl(url);
-  };
-
   options.onBusyChange(true);
   options.onError(null);
   try {
     const signed = await options.getSignedUrl(options.asset);
     try {
-      await openSignedUrl(signed.url);
+      await options.openUrl(signed.url);
     } catch {
       options.invalidateSignedUrl(options.asset.id);
       const fresh = await options.getSignedUrl(options.asset, true);
-      await openSignedUrl(fresh.url);
+      await options.openUrl(fresh.url);
     }
   } catch (cause) {
     options.onError(cause instanceof Error ? cause.message : 'The asset could not be opened.');
@@ -97,9 +174,48 @@ export async function openProjectAssetOriginal(options: OpenProjectAssetOriginal
   }
 }
 
+export async function openProjectAssetSignedUrl(options: {
+  canOpenExternalUrl: (url: string) => Promise<boolean>;
+  openExternalUrl: (url: string) => Promise<unknown>;
+  openInAppBrowser: (url: string) => Promise<unknown>;
+  platform: string;
+  url: string;
+}) {
+  if (options.platform === 'ios') {
+    await options.openInAppBrowser(options.url);
+    return;
+  }
+  if (!await options.canOpenExternalUrl(options.url)) {
+    throw new Error('No app is available to open this file.');
+  }
+  await options.openExternalUrl(options.url);
+}
+
+export async function runProjectAssetUploadFlow<T>(options: {
+  choose: () => Promise<PickedProjectAsset | null>;
+  onBusyChange: (busy: boolean) => void;
+  onError: (message: string | null) => void;
+  onSuccess: (value: T) => void;
+  perform: (selection: PickedProjectAsset) => Promise<T>;
+}) {
+  options.onBusyChange(true);
+  options.onError(null);
+  try {
+    const selection = await options.choose();
+    if (!selection) return 'canceled' as const;
+    options.onSuccess(await options.perform(selection));
+    return 'completed' as const;
+  } catch (cause) {
+    options.onError(cause instanceof Error ? cause.message : 'The file was not added.');
+    return 'failed' as const;
+  } finally {
+    options.onBusyChange(false);
+  }
+}
+
 type ProjectAssetServiceOptions = {
   createId?: () => string;
-  loadBinary?: (uri: string) => Promise<ArrayBuffer>;
+  loadBinary?: (selection: PickedProjectAsset) => Promise<ArrayBuffer>;
   now?: () => Date;
   storage: ProjectAssetStorage;
 };
@@ -154,14 +270,14 @@ export function isProjectAsset(resource: ProjectResource): resource is ProjectAs
 
 export class ProjectAssetService {
   private readonly createId: () => string;
-  private readonly loadBinary: (uri: string) => Promise<ArrayBuffer>;
+  private readonly loadBinary: (selection: PickedProjectAsset) => Promise<ArrayBuffer>;
   private readonly now: () => Date;
   private readonly uploads = new Map<string, Promise<ProjectAsset>>();
 
   constructor(private readonly repository: ProjectRepository, private readonly options: ProjectAssetServiceOptions) {
     this.createId = options.createId ?? defaultCreateId;
-    this.loadBinary = options.loadBinary ?? (async (uri) => {
-      const response = await fetch(uri);
+    this.loadBinary = options.loadBinary ?? (async (selection) => {
+      const response = await fetch(selection.uri);
       if (!response.ok) throw new Error('The selected file could not be read.');
       return response.arrayBuffer();
     });
@@ -263,7 +379,7 @@ export class ProjectAssetService {
     if (reservation.status === 'finalized') return this.repository.finalizeAssetUpload(identity.attemptId);
 
     if (!reservation.objectExists) {
-      const contents = await this.loadBinary(selection.uri);
+      const contents = await this.loadBinary(selection);
       if (contents.byteLength !== normalized.byteSize) {
         throw new Error('The selected file changed before it could be uploaded.');
       }

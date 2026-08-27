@@ -2,23 +2,24 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Platform } from 'react-native';
 
-import type { PickedProjectAsset } from './project-asset-service';
+import { createProjectDocumentPicker } from './project-asset-service';
+import type { PickedProjectAsset, ProjectDocumentPickerOutcome, ProjectDocumentPickerState } from './project-asset-service';
 
-export async function pickProjectDocument(): Promise<PickedProjectAsset | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    copyToCacheDirectory: true, multiple: false,
-    type: [
-      'application/pdf', 'application/msword', 'application/rtf', 'application/vnd.ms-excel',
-      'application/vnd.ms-powerpoint',
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain',
-    ],
-  });
-  if (result.canceled) return null;
-  const asset = result.assets[0];
-  return { mimeType: asset.mimeType, name: asset.name, size: asset.size,
-    source: Platform.OS === 'web' ? 'web-file-picker' : 'document-picker', uri: asset.uri };
+const pickerGlobal = globalThis as typeof globalThis & {
+  __tinaProjectDocumentPickerState?: ProjectDocumentPickerState;
+};
+const documentPickerState = pickerGlobal.__tinaProjectDocumentPickerState ??= { nativePickerActive: false };
+
+const pickProjectDocumentSingleFlight = createProjectDocumentPicker({
+  getDocument: (configuration) => DocumentPicker.getDocumentAsync(configuration),
+  onDiagnostic: (cause) => {
+    if (__DEV__) console.warn('Project document picker failed.', cause);
+  },
+  platform: Platform.OS,
+}, documentPickerState);
+
+export async function pickProjectDocument(): Promise<ProjectDocumentPickerOutcome> {
+  return pickProjectDocumentSingleFlight();
 }
 
 export async function pickProjectImage(): Promise<PickedProjectAsset | null> {

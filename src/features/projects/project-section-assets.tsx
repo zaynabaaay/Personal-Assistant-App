@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Image, Linking, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+import { Image, Linking, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { ProjectAsset, ProjectSection } from '@/domain/projects';
 import { pickProjectDocument, pickProjectImage } from '@/services/projects/project-asset-picker';
 import { projectAssetService } from '@/services/projects/project-client';
 import {
   isProjectAssetSignedUrlFresh,
+  openProjectAssetSignedUrl,
   openProjectAssetOriginal,
+  runProjectDocumentPickerFlow,
+  runProjectAssetUploadFlow,
 } from '@/services/projects/project-asset-service';
 import type { PickedProjectAsset, ProjectAssetSignedUrl } from '@/services/projects/project-asset-service';
 import type { ProjectAssetUploadIdentity } from '@/services/projects/project-repository';
@@ -65,12 +69,19 @@ function AssetDetail({ asset, getSignedUrl, invalidateSignedUrl, onChanged, onCl
     try {
       await openProjectAssetOriginal({
         asset,
-        canOpenUrl: Linking.canOpenURL,
         getSignedUrl,
         invalidateSignedUrl,
         onBusyChange: setBusy,
         onError: (message) => { setActionError(message); onError(message); },
-        openUrl: Linking.openURL,
+        openUrl: (signedUrl) => openProjectAssetSignedUrl({
+          canOpenExternalUrl: Linking.canOpenURL,
+          openExternalUrl: Linking.openURL,
+          openInAppBrowser: (urlToOpen) => WebBrowser.openBrowserAsync(urlToOpen, {
+            dismissButtonStyle: 'done', presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+          }),
+          platform: Platform.OS,
+          url: signedUrl,
+        }),
       });
     } finally { actionInFlight.current = false; }
   };
@@ -132,6 +143,7 @@ export function ProjectSectionAssets({ onError, projectId, section, sections }: 
   const [uploading, setUploading] = useState(false);
   const [selected, setSelected] = useState<ProjectAsset | null>(null);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const documentPickerAfterDismiss = useRef(false);
   const uploadInFlight = useRef(false);
 
   useEffect(() => {
@@ -167,26 +179,51 @@ export function ProjectSectionAssets({ onError, projectId, section, sections }: 
     return next;
   });
 
-  const upload = async (pick?: () => Promise<PickedProjectAsset | null>, retry?: PendingUpload) => {
+  const upload = async (pick?: () => Promise<PickedProjectAsset | null>, retry?: PendingUpload,
+    selectedFile?: PickedProjectAsset) => {
     if (uploadInFlight.current) return;
     uploadInFlight.current = true;
     setAddOpen(false);
-    setUploading(true);
-    onError(null);
     try {
-      const selection = retry?.selection ?? await pick?.();
-      if (!selection) return;
-      const identity = retry?.identity ?? projectAssetService.createUploadIdentity();
-      const pending = { identity, selection };
-      setPendingUpload(pending);
-      const asset = await projectAssetService.uploadWithIdentity(
-        projectId, section.id, selection, identity,
-      );
-      setAssets((current) => [asset, ...current]);
-      setPendingUpload(null);
-    } catch (cause) {
-      onError(cause instanceof Error ? cause.message : 'The file was not added.');
-    } finally { uploadInFlight.current = false; setUploading(false); }
+      await runProjectAssetUploadFlow<ProjectAsset>({
+        choose: async () => selectedFile ?? retry?.selection ?? await pick?.() ?? null,
+        onBusyChange: setUploading,
+        onError,
+        onSuccess: (asset) => {
+          setAssets((current) => [asset, ...current]);
+          setPendingUpload(null);
+        },
+        perform: async (selection) => {
+          const identity = retry?.identity ?? projectAssetService.createUploadIdentity();
+          setPendingUpload({ identity, selection });
+          return projectAssetService.uploadWithIdentity(projectId, section.id, selection, identity);
+        },
+      });
+    } finally { uploadInFlight.current = false; }
+  };
+
+  const pickAndUploadDocument = async () => {
+    await runProjectDocumentPickerFlow({
+      onError,
+      pick: pickProjectDocument,
+      upload: (selection) => upload(undefined, undefined, selection),
+    });
+  };
+
+  const requestDocumentPicker = () => {
+    onError(null);
+    setAddOpen(false);
+    if (Platform.OS === 'ios') {
+      documentPickerAfterDismiss.current = true;
+      return;
+    }
+    void pickAndUploadDocument();
+  };
+
+  const addSheetDismissed = () => {
+    if (!documentPickerAfterDismiss.current) return;
+    documentPickerAfterDismiss.current = false;
+    void pickAndUploadDocument();
   };
 
   const changed = (asset: ProjectAsset) => {
@@ -222,12 +259,12 @@ export function ProjectSectionAssets({ onError, projectId, section, sections }: 
     {archived.length ? <Pressable onPress={() => setShowArchived((value) => !value)} style={styles.archivedToggle} testID="toggle-archived-project-assets"><Text style={styles.archivedText}>{showArchived ? 'Show current material' : `Archived (${archived.length})`}</Text></Pressable> : null}
     {pendingUpload && !uploading ? <Pressable onPress={() => void upload(undefined, pendingUpload)} style={styles.retry} testID="retry-project-asset-upload"><Text style={styles.archivedText}>Retry last upload</Text></Pressable> : null}
 
-    <Modal animationType="fade" onRequestClose={() => setAddOpen(false)} transparent visible={addOpen}>
+    <Modal animationType="fade" onDismiss={addSheetDismissed} onRequestClose={() => setAddOpen(false)} transparent visible={addOpen}>
       <Pressable onPress={() => setAddOpen(false)} style={styles.backdrop}>
         <Pressable onPress={(event) => event.stopPropagation()} style={styles.addSheet}>
           <Text style={styles.sheetTitle}>Add to {section.title}</Text>
           <Pressable onPress={() => void upload(pickProjectImage)} style={styles.addChoice}><Text style={styles.choiceTitle}>Photo or image</Text><Text style={styles.choiceDetail}>JPEG, PNG, WebP, GIF, HEIC, or HEIF</Text></Pressable>
-          <Pressable onPress={() => void upload(pickProjectDocument)} style={styles.addChoice}><Text style={styles.choiceTitle}>File or document</Text><Text style={styles.choiceDetail}>PDF, Word, text, RTF, Excel, or PowerPoint · up to 25 MB</Text></Pressable>
+          <Pressable onPress={requestDocumentPicker} style={styles.addChoice}><Text style={styles.choiceTitle}>File or document</Text><Text style={styles.choiceDetail}>PDF, Word, text, RTF, Excel, or PowerPoint · up to 25 MB</Text></Pressable>
           <Pressable onPress={() => setAddOpen(false)} style={styles.close}><Text style={styles.closeText}>Cancel</Text></Pressable>
         </Pressable>
       </Pressable>

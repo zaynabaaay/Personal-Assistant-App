@@ -60,7 +60,8 @@
           "microphonePermission": false,
           "photosPermission": "Allow Personal Assistant to select images for your Projects."
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "baseUrl": "/Personal-Assistant-App",

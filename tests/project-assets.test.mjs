@@ -9,10 +9,16 @@ import {
   PROJECT_IMAGE_MAX_DIMENSION,
   PROJECT_IMAGE_MAX_PIXELS,
   ProjectAssetService,
+  createProjectDocumentPicker,
   isProjectAsset,
   isProjectAssetSignedUrlFresh,
+  loadProjectAssetSelectionBinary,
   normalizeProjectAssetSelection,
   openProjectAssetOriginal,
+  openProjectAssetSignedUrl,
+  pickedProjectDocumentFromResult,
+  runProjectAssetUploadFlow,
+  runProjectDocumentPickerFlow,
 } from '../src/services/projects/project-asset-service.ts';
 
 const AT = '2026-08-26T17:00:00.000Z';
@@ -72,6 +78,238 @@ test('PDF and document metadata are stored without claiming content extraction',
   const docAsset = await doc.service.upload('aqal', 'materials', selection({ mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', name: 'brief.docx', source: 'document-picker', width: undefined, height: undefined }));
   assert.equal(docAsset.type, 'document');
   assert.equal(docAsset.originalFilename, 'brief.docx');
+});
+
+test('real iOS Document Picker result maps the copied cache file without losing metadata', () => {
+  const picked = pickedProjectDocumentFromResult({
+    assets: [{
+      mimeType: 'application/pdf',
+      name: 'disposable-test.pdf',
+      size: 4,
+      uri: 'file:///private/var/mobile/Containers/Data/Application/APP/Library/Caches/DocumentPicker/FILE.pdf',
+    }],
+    canceled: false,
+  }, 'ios');
+  assert.deepEqual(picked, {
+    mimeType: 'application/pdf', name: 'disposable-test.pdf', size: 4,
+    source: 'document-picker',
+    uri: 'file:///private/var/mobile/Containers/Data/Application/APP/Library/Caches/DocumentPicker/FILE.pdf',
+  });
+  assert.equal(pickedProjectDocumentFromResult({ assets: null, canceled: true }, 'ios'), null);
+});
+
+test('native document picker is globally single-flight while its first presentation remains pending', async () => {
+  let nativeActive = false;
+  let nativeCalls = 0;
+  let settleNative;
+  const configurations = [];
+  const sharedState = { nativePickerActive: false };
+  const options = {
+    getDocument: (configuration) => {
+      configurations.push(configuration);
+      nativeCalls += 1;
+      if (nativeActive) {
+        throw new Error('PickingInProgressException: Different document picking in progress. Await other document picking first');
+      }
+      nativeActive = true;
+      return new Promise((resolve) => {
+        settleNative = (result) => { nativeActive = false; resolve(result); };
+      });
+    },
+    platform: 'ios',
+  };
+  const picker = createProjectDocumentPicker(options, sharedState);
+  const remountedPicker = createProjectDocumentPicker(options, sharedState);
+
+  const first = picker();
+  assert.deepEqual(await remountedPicker(), { status: 'suppressed' });
+  assert.equal(nativeCalls, 1);
+  assert.equal(configurations[0].copyToCacheDirectory, true);
+  settleNative({ assets: null, canceled: true });
+  assert.deepEqual(await first, { status: 'cancelled' });
+
+  const later = remountedPicker();
+  assert.equal(nativeCalls, 2);
+  settleNative({ assets: [{ mimeType: 'application/pdf', name: 'later.pdf', size: 4,
+    uri: 'file:///private/var/mobile/Library/Caches/DocumentPicker/later.pdf' }], canceled: false });
+  assert.equal((await later).selection.name, 'later.pdf');
+
+  const afterSuccess = picker();
+  assert.equal(nativeCalls, 3);
+  settleNative({ assets: null, canceled: true });
+  assert.deepEqual(await afterSuccess, { status: 'cancelled' });
+});
+
+test('document picker exceptions are sanitized and release the guard for a later request', async () => {
+  const diagnostics = [];
+  let nativeCalls = 0;
+  const picker = createProjectDocumentPicker({
+    getDocument: async () => {
+      nativeCalls += 1;
+      if (nativeCalls === 1) {
+        throw new Error('PickingInProgressException.swift:42');
+      }
+      return { assets: null, canceled: true };
+    },
+    onDiagnostic: (cause) => diagnostics.push(cause),
+    platform: 'ios',
+  });
+
+  await assert.rejects(picker(), (cause) => {
+    assert.equal(cause.message, 'Couldn’t open the file picker. Please try again.');
+    assert.doesNotMatch(cause.message, /PickingInProgressException|swift/i);
+    return true;
+  });
+  assert.match(diagnostics[0].message, /PickingInProgressException/);
+  assert.deepEqual(await picker(), { status: 'cancelled' });
+  assert.equal(nativeCalls, 2);
+});
+
+test('picker presentation stays separate from upload state and one selection uploads exactly once', async () => {
+  let nativeCalls = 0;
+  let settleNative;
+  const picker = createProjectDocumentPicker({
+    getDocument: () => {
+      nativeCalls += 1;
+      return new Promise((resolve) => { settleNative = resolve; });
+    },
+    platform: 'ios',
+  });
+  let uploadAttempts = 0;
+  let uploadBusy = false;
+  const errors = [];
+  const flow = () => runProjectDocumentPickerFlow({
+    onError: (message) => errors.push(message),
+    pick: picker,
+    upload: async () => {
+      uploadBusy = true;
+      uploadAttempts += 1;
+      uploadBusy = false;
+    },
+  });
+
+  const first = flow();
+  assert.equal(uploadBusy, false);
+  const duplicate = flow();
+  assert.equal(await duplicate, 'suppressed');
+  assert.equal(uploadBusy, false);
+  assert.equal(uploadAttempts, 0);
+  assert.equal(nativeCalls, 1);
+  settleNative({ assets: [{ mimeType: 'application/pdf', name: 'one.pdf', size: 4,
+    uri: 'file:///private/var/mobile/Library/Caches/DocumentPicker/one.pdf' }], canceled: false });
+  assert.equal(await first, 'uploaded');
+  assert.equal(uploadAttempts, 1);
+  assert.deepEqual(errors, [null, null]);
+});
+
+test('picker cancellation and failure never enter upload state or leak native errors', async () => {
+  let result = { assets: null, canceled: true };
+  const picker = createProjectDocumentPicker({
+    getDocument: async () => {
+      if (result instanceof Error) throw result;
+      return result;
+    },
+    platform: 'ios',
+  });
+  let uploadAttempts = 0;
+  const errors = [];
+  const flow = () => runProjectDocumentPickerFlow({
+    onError: (message) => errors.push(message),
+    pick: picker,
+    upload: async () => { uploadAttempts += 1; },
+  });
+
+  assert.equal(await flow(), 'cancelled');
+  assert.equal(uploadAttempts, 0);
+  result = new Error('PickingInProgressException.swift:42');
+  assert.equal(await flow(), 'failed');
+  assert.equal(uploadAttempts, 0);
+  assert.equal(errors.at(-1), 'Couldn’t open the file picker. Please try again.');
+  assert.doesNotMatch(errors.at(-1), /PickingInProgressException|swift/i);
+
+  result = { assets: null, canceled: true };
+  assert.equal(await flow(), 'cancelled');
+  assert.equal(uploadAttempts, 0);
+});
+
+test('native document reads use the Expo file seam while images and web retain fetch loading', async () => {
+  const calls = [];
+  const options = {
+    fetchBinary: async (uri) => { calls.push(['fetch', uri]); return new Uint8Array([8]).buffer; },
+    platform: 'ios',
+    readNativeFile: async (uri) => { calls.push(['file', uri]); return new Uint8Array([1, 2, 3, 4]).buffer; },
+  };
+  const pdf = selection({ mimeType: 'application/pdf', name: 'test.pdf', source: 'document-picker',
+    uri: 'file:///Library/Caches/DocumentPicker/test.pdf', width: undefined, height: undefined });
+  assert.deepEqual(new Uint8Array(await loadProjectAssetSelectionBinary(pdf, options)), new Uint8Array([1, 2, 3, 4]));
+  assert.deepEqual(calls, [['file', pdf.uri]]);
+
+  calls.length = 0;
+  await loadProjectAssetSelectionBinary(selection(), options);
+  assert.deepEqual(calls, [['fetch', 'memory://linen']]);
+
+  calls.length = 0;
+  await loadProjectAssetSelectionBinary(pdf, { ...options, platform: 'web' });
+  assert.deepEqual(calls, [['fetch', pdf.uri]]);
+});
+
+test('native document read failure rejects instead of leaving the upload unresolved', async () => {
+  const pdf = selection({ mimeType: 'application/pdf', name: 'test.pdf', source: 'document-picker',
+    uri: 'file:///Library/Caches/DocumentPicker/test.pdf', width: undefined, height: undefined });
+  await assert.rejects(loadProjectAssetSelectionBinary(pdf, {
+    fetchBinary: async () => { throw new Error('fetch should not run'); },
+    platform: 'ios',
+    readNativeFile: async () => { throw new Error('native read failed'); },
+  }), /native read failed/);
+});
+
+test('upload UI flow clears Adding state for success, cancellation, and visible failure', async () => {
+  const run = async ({ choose, perform }) => {
+    const busy = [];
+    const errors = [];
+    const completed = [];
+    const status = await runProjectAssetUploadFlow({
+      choose, onBusyChange: (value) => busy.push(value), onError: (value) => errors.push(value),
+      onSuccess: (value) => completed.push(value), perform,
+    });
+    return { busy, completed, errors, status };
+  };
+  const picked = selection({ mimeType: 'application/pdf', name: 'test.pdf', source: 'document-picker',
+    width: undefined, height: undefined });
+  const success = await run({ choose: async () => picked, perform: async () => 'uploaded' });
+  assert.deepEqual(success, { busy: [true, false], completed: ['uploaded'], errors: [null], status: 'completed' });
+  const canceled = await run({ choose: async () => null, perform: async () => 'never' });
+  assert.deepEqual(canceled, { busy: [true, false], completed: [], errors: [null], status: 'canceled' });
+  const failed = await run({ choose: async () => picked,
+    perform: async () => { throw new Error('The selected file could not be read.'); } });
+  assert.deepEqual(failed, { busy: [true, false], completed: [],
+    errors: [null, 'The selected file could not be read.'], status: 'failed' });
+});
+
+test('upload and finalization failures surface through the UI flow and clear Adding state', async () => {
+  const exercise = async (service, expected) => {
+    const busy = [];
+    const errors = [];
+    const picked = selection({ mimeType: 'application/pdf', name: 'test.pdf', source: 'document-picker',
+      width: undefined, height: undefined });
+    const status = await runProjectAssetUploadFlow({
+      choose: async () => picked,
+      onBusyChange: (value) => busy.push(value),
+      onError: (value) => errors.push(value),
+      onSuccess: () => assert.fail('failed upload must not complete'),
+      perform: (value) => service.upload('aqal', 'overview', value),
+    });
+    assert.equal(status, 'failed');
+    assert.deepEqual(busy, [true, false]);
+    assert.match(errors.at(-1), expected);
+  };
+
+  const uploadFailure = setup({ storage: { upload: async () => { throw new Error('storage unavailable'); } } });
+  await exercise(uploadFailure.service, /storage unavailable/);
+
+  const finalizationFailure = setup();
+  finalizationFailure.repository.finalizeAssetUpload = async () => { throw new Error('finalization unavailable'); };
+  await exercise(finalizationFailure.service, /finalization unavailable/);
 });
 
 test('unsupported, mismatched, oversized, and malformed picker inputs fail deterministically', () => {
@@ -155,7 +393,6 @@ function openAssetHarness(overrides = {}) {
   let signIndex = 0;
   const run = () => openProjectAssetOriginal({
     asset,
-    canOpenUrl: overrides.canOpenUrl ?? (async () => true),
     getSignedUrl: async (_asset, force = false) => {
       forced.push(force);
       return signed[Math.min(signIndex++, signed.length - 1)];
@@ -180,6 +417,35 @@ test('Open original uses a valid cached URL without refreshing and clears busy s
   assert.deepEqual(value.errors, [null]);
   assert.deepEqual(value.busy, [true, false]);
   assert.equal('signedUrl' in value.asset || 'url' in value.asset || 'expiresAt' in value.asset, false);
+});
+
+test('physical iOS signed HTTPS URL uses the in-app browser and not Linking', async () => {
+  const calls = [];
+  await openProjectAssetSignedUrl({
+    canOpenExternalUrl: async () => { calls.push('can-open'); return true; },
+    openExternalUrl: async () => { calls.push('linking'); },
+    openInAppBrowser: async (url) => { calls.push(['browser', url]); },
+    platform: 'ios',
+    url: 'https://storage.example.test/object?token=temporary',
+  });
+  assert.deepEqual(calls, [['browser', 'https://storage.example.test/object?token=temporary']]);
+});
+
+test('non-iOS URL open retains handler validation and external handoff', async () => {
+  const calls = [];
+  await openProjectAssetSignedUrl({
+    canOpenExternalUrl: async () => { calls.push('can-open'); return true; },
+    openExternalUrl: async (url) => { calls.push(['external', url]); },
+    openInAppBrowser: async () => { calls.push('browser'); },
+    platform: 'web', url: 'https://storage.example.test/object',
+  });
+  assert.deepEqual(calls, ['can-open', ['external', 'https://storage.example.test/object']]);
+  await assert.rejects(openProjectAssetSignedUrl({
+    canOpenExternalUrl: async () => false,
+    openExternalUrl: async () => undefined,
+    openInAppBrowser: async () => undefined,
+    platform: 'android', url: 'https://storage.example.test/object',
+  }), /No app is available/);
 });
 
 test('Open original invalidates a failed URL, force-refreshes, and retries exactly once', async () => {
@@ -275,9 +541,11 @@ test('failed binary upload never creates a false persisted asset row', async () 
 });
 
 test('asset UI stays section-scoped and preserves Project Tina and New Chat behavior', async () => {
-  const [screen, surface, routing, chat] = await Promise.all([
+  const [screen, surface, picker, client, routing, chat] = await Promise.all([
     readFile(new URL('../src/features/projects/project-screen.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/features/projects/project-section-assets.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/services/projects/project-asset-picker.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/services/projects/project-client.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/server/assistant/project-scope-routing.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/services/projects/project-chat-service.ts', import.meta.url), 'utf8'),
   ]);
@@ -289,10 +557,17 @@ test('asset UI stays section-scoped and preserves Project Tina and New Chat beha
   assert.match(surface, /projectAssetService\.archive/);
   assert.match(surface, /projectAssetService\.restore/);
   assert.match(surface, /actionInFlight\.current/);
-  assert.match(surface, /onError\(cause instanceof Error/);
+  assert.match(surface, /runProjectAssetUploadFlow/);
+  assert.match(surface, /runProjectDocumentPickerFlow/);
+  assert.match(surface, /documentPickerAfterDismiss\.current = true/);
+  assert.match(surface, /onDismiss=\{addSheetDismissed\}/);
+  assert.match(surface, /onBusyChange: setUploading/);
   assert.match(surface, /setActionError\(message\)/);
   assert.match(surface, /finally \{ actionInFlight\.current = false; setBusy\(false\); \}/);
   assert.match(surface, /isProjectAssetSignedUrlFresh/);
+  assert.match(surface, /WebBrowser\.openBrowserAsync/);
+  assert.match(picker, /createProjectDocumentPicker/);
+  assert.match(client, /readNativeFile: \(uri\) => new File\(uri\)\.arrayBuffer\(\)/);
   assert.doesNotMatch(routing, /section/i);
   assert.doesNotMatch(chat, /section/i);
   assert.match(screen, /projectChatService\.startNewSession\(session\)/);
