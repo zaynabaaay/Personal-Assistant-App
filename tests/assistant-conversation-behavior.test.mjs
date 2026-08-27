@@ -97,6 +97,14 @@ test('evaluation: tool-backed answers remain grounded while tool mechanics stay 
   assert.match(instructions, /Never invent calendar events or availability/);
 });
 
+test('evaluation: a suggestive uploaded filename is not evidence of file contents', () => {
+  assert.match(instructions, /filename.*is not evidence of the file contents/i);
+  assert.match(instructions, /Never claim to have read, inspected, summarized, or understood an uploaded asset/i);
+  const projectContext = ASSISTANT_TOOL_CONTRACTS.find(({ name }) => name === 'get_project_context');
+  assert.match(projectContext.openAI.description, /filenames.*are not evidence of file contents/i);
+  assert.match(projectContext.openAI.description, /does not retrieve or analyze file bytes/i);
+});
+
 test('evaluation: responses do not have to end with a follow-up question', () => {
   assert.match(instructions, /do not force every reply to end with a question/);
   assert.match(instructions, /Ask at most one natural clarification/);

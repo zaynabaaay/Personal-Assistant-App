@@ -30,6 +30,7 @@ import { assistantService } from '@/services/assistant/assistant-service';
 import { projectChatService, projectRepository, projectService } from '@/services/projects/project-client';
 
 import { projectFallbackInitial } from './project-presentation';
+import { ProjectSectionAssets } from './project-section-assets';
 import { ProjectSectionNavigation } from './project-section-navigation';
 import { ProjectSectionsManager } from './project-sections-manager';
 
@@ -280,13 +281,18 @@ export default function ProjectScreen() {
 
               <ProjectSectionNavigation onSelect={(section) => setSelectedSectionId(section.id)} sections={activeSections} selectedId={selectedSection?.id ?? ''} />
               {selectedSection?.isDefault ? (
-                <View style={styles.overview} testID="project-overview-section">
-                  <Text style={styles.overviewLabel}>About this Project</Text>
-                  <Text style={styles.overviewText}>{project.description ?? 'Add a short description to give this Project its purpose.'}</Text>
-                  {project.goal ? <View style={styles.purpose}><Text style={styles.purposeLabel}>Purpose</Text><Text style={styles.purposeText}>{project.goal}</Text></View> : null}
-                </View>
+                <>
+                  <View style={styles.overview} testID="project-overview-section">
+                    <Text style={styles.overviewLabel}>About this Project</Text>
+                    <Text style={styles.overviewText}>{project.description ?? 'Add a short description to give this Project its purpose.'}</Text>
+                    {project.goal ? <View style={styles.purpose}><Text style={styles.purposeLabel}>Purpose</Text><Text style={styles.purposeText}>{project.goal}</Text></View> : null}
+                  </View>
+                  <ProjectSectionAssets key={selectedSection.id} onError={setError} projectId={project.id} section={selectedSection} sections={activeSections} />
+                </>
               ) : selectedSection ? (
-                <View accessibilityLabel={`${selectedSection.title} section`} style={styles.customSectionSurface} testID="project-custom-section-surface" />
+                <View accessibilityLabel={`${selectedSection.title} section`} style={styles.customSectionSurface} testID="project-custom-section-surface">
+                  <ProjectSectionAssets key={selectedSection.id} onError={setError} projectId={project.id} section={selectedSection} sections={activeSections} />
+                </View>
               ) : null}
             </> : null}
           </ScrollView>
@@ -345,7 +351,7 @@ const styles = StyleSheet.create({
   overview: { borderTopColor: '#18181B', borderTopWidth: StyleSheet.hairlineWidth, marginHorizontal: 20, paddingBottom: 40, paddingTop: 28 },
   overviewLabel: { color: '#74747A', fontSize: 12, fontWeight: '600', letterSpacing: 0.2, textTransform: 'uppercase' },
   overviewText: { color: '#D5D5D8', fontSize: 16, lineHeight: 24, marginTop: 12, maxWidth: 620 },
-  customSectionSurface: { borderTopColor: '#18181B', borderTopWidth: StyleSheet.hairlineWidth, minHeight: 300, marginHorizontal: 20 },
+  customSectionSurface: { minHeight: 300 },
   purpose: { borderLeftColor: '#343B49', borderLeftWidth: 2, marginTop: 26, paddingLeft: 15 },
   purposeLabel: { color: '#77777D', fontSize: 12, fontWeight: '600' },
   purposeText: { color: '#BCBCC1', fontSize: 15, lineHeight: 22, marginTop: 6 },

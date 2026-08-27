@@ -52,6 +52,14 @@
           "remindersPermission": false,
           "writeOnlyAccess": false
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": false,
+          "microphonePermission": false,
+          "photosPermission": "Allow Personal Assistant to select images for your Projects."
+        }
       ]
     ],
     "experiments": {

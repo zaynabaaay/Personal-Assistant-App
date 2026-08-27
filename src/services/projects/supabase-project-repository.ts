@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import type {
   Project,
+  ProjectAsset,
   ProjectChangeEvent,
   ProjectDecision,
   ProjectDeliverable,
@@ -16,6 +17,8 @@ import type {
 import { getSupabaseClient } from '../auth/supabase-client';
 
 import type {
+  BeginProjectAssetUploadInput,
+  ProjectAssetUploadReservation,
   ProjectRepository,
   ProjectRepositoryChanges,
 } from './project-repository';
@@ -56,6 +59,10 @@ function requiredNumber(row: DatabaseRow, key: string) {
   }
 
   return value;
+}
+
+function optionalNumber(value: unknown) {
+  return typeof value === 'number' ? value : undefined;
 }
 
 function optionalField(key: string, value: unknown) {
@@ -189,13 +196,22 @@ function toWorkSessionEntry(row: DatabaseRow): ProjectWorkSessionEntry {
 function toResource(row: DatabaseRow): ProjectResource {
   return {
     ...baseProjectEntity(row),
+    ...optionalField('byteSize', optionalNumber(row.byte_size)),
     ...optionalField('description', optionalString(row.description)),
     ...optionalField('externalUrl', optionalString(row.external_url)),
+    ...optionalField('height', optionalNumber(row.height)),
     ...optionalField('mimeType', optionalString(row.mime_type)),
     name: requiredString(row, 'name'),
+    ...optionalField('originalFilename', optionalString(row.original_filename)),
     role: requiredString(row, 'role') as ProjectResource['role'],
+    resourceKind: (optionalString(row.resource_kind) ?? 'legacy') as ProjectResource['resourceKind'],
+    ...optionalField('sectionId', optionalString(row.section_id)),
+    ...optionalField('sourceMetadata', row.source_metadata),
     ...optionalField('sourceSessionId', optionalString(row.source_session_id)),
+    ...optionalField('status', optionalString(row.status)),
+    ...optionalField('storagePath', optionalString(row.storage_path)),
     type: requiredString(row, 'type') as ProjectResource['type'],
+    ...optionalField('width', optionalNumber(row.width)),
   } as ProjectResource;
 }
 
@@ -293,11 +309,15 @@ function workSessionEntryRow(value: ProjectWorkSessionEntry, projectId: string) 
 }
 
 function resourceRow(value: ProjectResource) {
-  return { created_at: value.createdAt, description: nullable(value.description),
+  return { byte_size: nullable(value.byteSize), created_at: value.createdAt, description: nullable(value.description),
     external_url: nullable(value.externalUrl), id: value.id, mime_type: nullable(value.mimeType),
-    name: value.name, project_id: value.projectId, role: value.role,
+    height: nullable(value.height), name: value.name,
+    original_filename: nullable(value.originalFilename), project_id: value.projectId,
+    resource_kind: value.resourceKind ?? 'legacy', role: value.role,
+    section_id: nullable(value.sectionId), source_metadata: value.sourceMetadata ?? {},
     source_session_id: nullable(value.sourceSessionId), type: value.type,
-    updated_at: value.updatedAt };
+    status: value.status ?? 'current', storage_path: nullable(value.storagePath),
+    updated_at: value.updatedAt, width: nullable(value.width) };
 }
 
 function sectionRow(value: ProjectSection) {
@@ -357,6 +377,50 @@ export class SupabaseProjectRepository implements ProjectRepository {
     return data ? map(data as DatabaseRow) : null;
   }
 
+  async beginAssetUpload(input: BeginProjectAssetUploadInput): Promise<ProjectAssetUploadReservation> {
+    const { data, error } = await this.getClient().rpc('begin_project_asset_upload', {
+      p_asset_id: input.assetId, p_attempt_id: input.attemptId,
+      p_byte_size: input.byteSize, p_height: input.height ?? null,
+      p_mime_type: input.mimeType, p_object_id: input.objectId,
+      p_original_filename: input.originalFilename, p_project_id: input.projectId,
+      p_section_id: input.sectionId, p_source_picker: input.picker,
+      p_width: input.width ?? null,
+    });
+    if (error) throw error;
+    const row = data as DatabaseRow | null;
+    if (!row) throw new Error('Supabase returned an invalid upload reservation.');
+    return {
+      assetId: requiredString(row, 'asset_id'), attemptId: requiredString(row, 'attempt_id'),
+      objectExists: row.object_exists === true, objectId: requiredString(row, 'object_id'),
+      projectId: requiredString(row, 'project_id'), sectionId: requiredString(row, 'section_id'),
+      status: requiredString(row, 'status') as ProjectAssetUploadReservation['status'],
+      storagePath: requiredString(row, 'storage_path'),
+    };
+  }
+
+  async finalizeAssetUpload(attemptId: string) {
+    const { data, error } = await this.getClient().rpc('finalize_project_asset_upload', {
+      p_attempt_id: attemptId,
+    });
+    if (error) throw error;
+    if (!data) throw new Error('Supabase returned an invalid finalized Project asset.');
+    return toResource(data as DatabaseRow) as ProjectAsset;
+  }
+
+  async markAssetUploadCleaned(attemptId: string) {
+    const { error } = await this.getClient().rpc('mark_project_asset_upload_cleaned', {
+      p_attempt_id: attemptId,
+    });
+    if (error) throw error;
+  }
+
+  async reconcileAssetUploads(projectId: string, sectionId: string) {
+    const { error } = await this.getClient().rpc('reconcile_project_asset_uploads', {
+      p_project_id: projectId, p_section_id: sectionId,
+    });
+    if (error) throw error;
+  }
+
   private async list<T>(table: ProjectTable, column: string, value: string,
     map: (row: DatabaseRow) => T, orders: string[] = [], limit?: number,
     ascending = true) {
@@ -384,6 +448,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
   async getKnowledgeItem(id: string) { return this.getOne('project_knowledge_items', id, toKnowledgeItem); }
   async getMilestone(id: string) { return this.getOne('project_milestones', id, toMilestone); }
   async getProject(id: string) { return this.getOne('projects', id, toProject); }
+  async getResource(id: string) { return this.getOne('project_resources', id, toResource); }
   async getSection(id: string) { return this.getOne('project_sections', id, toSection); }
   async getTask(id: string) { return this.getOne('project_tasks', id, toTask); }
   async getWorkSession(id: string) { return this.getOne('project_work_sessions', id, toWorkSession); }
@@ -403,7 +468,18 @@ export class SupabaseProjectRepository implements ProjectRepository {
   async saveKnowledgeItem(value: ProjectKnowledgeItem) { await this.upsert('project_knowledge_items', knowledgeRow(value)); }
   async saveMilestone(value: ProjectMilestone) { await this.upsert('project_milestones', milestoneRow(value)); }
   async saveProject(value: Project) { await this.upsert('projects', projectRow(value)); }
-  async saveResource(value: ProjectResource) { await this.upsert('project_resources', resourceRow(value)); }
+  async saveResource(value: ProjectResource) {
+    if (value.resourceKind === 'uploaded_asset') {
+      const { error } = await this.getClient().from('project_resources').update({
+        description: value.description ?? null, name: value.name,
+        section_id: value.sectionId ?? null, status: value.status ?? 'current',
+        updated_at: value.updatedAt,
+      }).eq('id', value.id);
+      if (error) throw error;
+      return;
+    }
+    await this.upsert('project_resources', resourceRow(value));
+  }
   async saveSection(value: ProjectSection) { await this.upsert('project_sections', sectionRow(value)); }
   async saveTask(value: ProjectTask) { await this.upsert('project_tasks', taskRow(value)); }
   async saveWorkSession(value: ProjectWorkSession) { await this.upsert('project_work_sessions', workSessionRow(value)); }

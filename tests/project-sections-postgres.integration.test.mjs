@@ -13,6 +13,7 @@ const OWNER_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const OWNER_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SECTION_MIGRATION = '20260826120000_create_project_sections.sql';
+const ASSET_MIGRATION = '20260826170000_add_project_assets.sql';
 const AT = '2026-08-26T16:00:00.000Z';
 
 let admin;
@@ -83,7 +84,7 @@ before(async () => {
   `);
   const migrationDir = path.join(ROOT, 'supabase', 'migrations');
   const migrations = (await readdir(migrationDir))
-    .filter((name) => name.endsWith('.sql') && name !== SECTION_MIGRATION)
+    .filter((name) => name.endsWith('.sql') && name !== SECTION_MIGRATION && name !== ASSET_MIGRATION)
     .sort();
   for (const migration of migrations) {
     await admin.query(await readFile(path.join(migrationDir, migration), 'utf8'));

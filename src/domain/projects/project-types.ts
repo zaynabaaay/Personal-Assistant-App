@@ -160,17 +160,37 @@ export type ProjectWorkSessionEntry = {
 };
 
 export type ProjectResource = {
+  byteSize?: number;
   createdAt: ISODateTime;
   description?: string;
   externalUrl?: string;
+  height?: number;
   id: ProjectEntityId;
   mimeType?: string;
   name: string;
+  originalFilename?: string;
   projectId: ProjectId;
+  resourceKind?: 'legacy' | 'uploaded_asset';
   role: 'reference' | 'working';
+  sectionId?: ProjectEntityId;
+  sourceMetadata?: Record<string, boolean | number | string | null>;
   sourceSessionId?: ProjectEntityId;
+  status?: 'current' | 'archived';
+  storagePath?: string;
   type: 'document' | 'pdf' | 'spreadsheet' | 'image' | 'link' | 'other';
   updatedAt: ISODateTime;
+  width?: number;
+};
+
+/** An original uploaded source represented by the existing Project resource domain. */
+export type ProjectAsset = ProjectResource & {
+  byteSize: number;
+  mimeType: string;
+  originalFilename: string;
+  sectionId: ProjectEntityId;
+  resourceKind: 'uploaded_asset';
+  status: 'current' | 'archived';
+  storagePath: string;
 };
 
 export type ProjectChangeEventType =

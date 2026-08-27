@@ -137,7 +137,7 @@ async function getProjectContext(
   const includeWork = wants(focus, 'work');
   const includeKnowledge = wants(focus, 'knowledge');
   const includeHistory = wants(focus, 'history');
-  const [tasks, milestones, deliverables, knowledge, decisions, sessions, resources, changes] =
+  const [tasks, milestones, deliverables, knowledge, decisions, sessions, resources, sections, changes] =
     await Promise.all([
       includeWork ? repository.listTasks(projectId) : [],
       includeWork ? repository.listMilestones(projectId) : [],
@@ -146,6 +146,7 @@ async function getProjectContext(
       includeKnowledge ? repository.listDecisions(projectId) : [],
       includeWork || includeHistory ? repository.listWorkSessions(projectId) : [],
       includeKnowledge ? repository.listResources(projectId) : [],
+      includeKnowledge ? repository.listSections(projectId) : [],
       includeHistory ? repository.listChangeEvents(projectId) : [],
     ]);
   const truncatedSections: string[] = [];
@@ -209,10 +210,16 @@ async function getProjectContext(
       statement: truncate(value.statement, 1_000) ?? value.statement,
     }));
     result.resources = resources.slice(0, LIMITS.resources).map((value) => ({
+      ...optional('byteSize', value.byteSize),
+      ...optional('createdAt', value.storagePath ? value.createdAt : undefined),
       ...optional('description', truncate(value.description, 600)),
       ...optional('externalUrl', truncate(value.externalUrl, 1_000)), id: value.id,
       ...optional('mimeType', truncate(value.mimeType, 200)),
-      name: truncate(value.name, 300) ?? value.name, role: value.role, type: value.type,
+      name: truncate(value.name, 300) ?? value.name,
+      ...optional('originalFilename', truncate(value.originalFilename, 300)),
+      role: value.role, ...optional('sectionId', value.sectionId),
+      ...optional('sectionTitle', sections.find((section) => section.id === value.sectionId)?.title),
+      ...optional('status', value.status), type: value.type,
     }));
   }
 

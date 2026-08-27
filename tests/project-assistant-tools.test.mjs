@@ -77,7 +77,14 @@ function seed() {
     projects: [project()],
     resources: [{ createdAt: CREATED_AT, externalUrl: 'https://example.com/brand',
       id: 'resource-1', name: 'Brand reference', projectId: PROJECT_ID,
-      role: 'reference', type: 'link', updatedAt: UPDATED_AT }],
+      role: 'reference', type: 'link', updatedAt: UPDATED_AT },
+    { byteSize: 4, createdAt: CREATED_AT, id: 'asset-1', mimeType: 'image/png',
+      name: 'Linen swatch', originalFilename: 'linen.png', projectId: PROJECT_ID,
+      role: 'reference', sectionId: 'materials', status: 'current',
+      storagePath: `${USER_ID}/${PROJECT_ID}/asset-1/object-1`, type: 'image',
+      updatedAt: UPDATED_AT }],
+    sections: [{ createdAt: CREATED_AT, id: 'materials', isDefault: false, position: 1,
+      projectId: PROJECT_ID, status: 'active', title: 'Materials', updatedAt: UPDATED_AT }],
     tasks: [
       { createdAt: CREATED_AT, id: 'task-open', position: 0, priority: 'high',
         projectId: PROJECT_ID, status: 'in_progress', title: 'Finish homepage copy',
@@ -148,6 +155,11 @@ test('comprehensive Project context returns current facts without raw transcript
   assert.deepEqual(output.result.unresolvedQuestions.map((value) => value.id), ['question-current']);
   assert.equal(output.result.recentWorkSessions[0].summary, 'Reviewed visual direction.');
   assert.equal(output.result.resources[0].name, 'Brand reference');
+  assert.deepEqual(output.result.resources[1], {
+    byteSize: 4, createdAt: CREATED_AT, id: 'asset-1', mimeType: 'image/png',
+    name: 'Linen swatch', originalFilename: 'linen.png', role: 'reference',
+    sectionId: 'materials', sectionTitle: 'Materials', status: 'current', type: 'image',
+  });
   assert.equal(output.result.recentChanges[0].eventType, 'task_completed');
   assert.equal(rawEntryReads, 0);
   assert.doesNotMatch(JSON.stringify(output), /Private raw transcript text|knowledge-old|decision-old/);
@@ -248,6 +260,72 @@ test('server tool loop can list then retrieve a Project before Tina answers', as
   assert.match(requests[1].input.at(-1).output, /AQAL Collective/);
   assert.match(requests[2].input.at(-1).output, /Finish homepage copy/);
   assert.doesNotMatch(JSON.stringify(requests), /Private raw transcript text|verified-project-token/);
+});
+
+test('suggestive uploaded filename remains metadata, not evidence of document contents', async () => {
+  const assetSeed = seed();
+  assetSeed.resources = [{
+    byteSize: 842_731,
+    createdAt: CREATED_AT,
+    id: 'asset-manufacturer-contract',
+    mimeType: 'application/pdf',
+    name: 'Final manufacturer pricing and contract',
+    originalFilename: 'final-manufacturer-pricing-and-contract.pdf',
+    projectId: PROJECT_ID,
+    resourceKind: 'uploaded_asset',
+    role: 'reference',
+    sectionId: 'materials',
+    sourceMetadata: { addedAt: CREATED_AT, kind: 'original-upload', picker: 'document-picker' },
+    status: 'current',
+    storagePath: `${USER_ID}/${PROJECT_ID}/asset-manufacturer-contract/object-contract`,
+    type: 'pdf',
+    updatedAt: UPDATED_AT,
+  }];
+  const requests = [];
+  const executeReadTool = executorFor({ [USER_ID]: assetSeed });
+  const safeAnswer = 'A PDF named final-manufacturer-pricing-and-contract.pdf exists in the Materials section, but its contents have not been made available for me to read or analyze, so I cannot tell what price the manufacturer quoted.';
+  let providerStep = 0;
+  const response = await handleAssistantRequest(assistantRequest({
+    ...BASE_REQUEST,
+    messages: [{ content: 'What price did the manufacturer quote in that document?', role: 'user' }],
+  }), {
+    allowedOrigin: 'https://example.com',
+    apiKey: 'test-key',
+    executeServerTool: executeReadTool,
+    fetchImplementation: async (_url, init) => {
+      const request = JSON.parse(String(init.body));
+      requests.push(request);
+      if (providerStep++ === 0) {
+        return projectToolResponse('get_project_context', {
+          focus: 'knowledge', projectId: PROJECT_ID,
+        }, 'asset-context');
+      }
+      const toolResult = JSON.parse(request.input.at(-1).output);
+      assert.equal(toolResult.resources[0].originalFilename,
+        'final-manufacturer-pricing-and-contract.pdf');
+      assert.equal(toolResult.resources[0].mimeType, 'application/pdf');
+      assert.equal(toolResult.resources[0].byteSize, 842_731);
+      assert.equal(toolResult.resources[0].sectionTitle, 'Materials');
+      assert.equal('content' in toolResult.resources[0], false);
+      assert.equal('summary' in toolResult.resources[0], false);
+      assert.equal('sourceMetadata' in toolResult.resources[0], false);
+      assert.match(request.instructions, /not evidence of the file contents/i);
+      return openAIResponse([{ content: [{ text: safeAnswer, type: 'output_text' }],
+        type: 'message' }]);
+    },
+    verifyAccessToken: verifyToken,
+  });
+
+  assert.equal(response.status, 200);
+  const content = (await response.json()).content;
+  assert.equal(content, safeAnswer);
+  assert.match(content, /PDF named final-manufacturer-pricing-and-contract\.pdf exists/);
+  assert.match(content, /contents have not been made available.*read or analyze/i);
+  assert.doesNotMatch(content, /I (?:read|analyzed|reviewed|inspected) (?:the|that) (?:file|document)/i);
+  assert.doesNotMatch(content, /[$€£]\s*\d|\b\d+(?:\.\d+)?\s*(?:USD|CAD|EUR|GBP)\b/i);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].input.at(-2).name, 'get_project_context');
+  assert.equal(requests[1].input.at(-1).type, 'function_call_output');
 });
 
 test('a descriptive clothing-brand reference resolves one clear Project before answering', async () => {
