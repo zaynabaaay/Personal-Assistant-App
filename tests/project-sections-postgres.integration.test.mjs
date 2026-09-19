@@ -14,6 +14,8 @@ const OWNER_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SECTION_MIGRATION = '20260826120000_create_project_sections.sql';
 const ASSET_MIGRATION = '20260826170000_add_project_assets.sql';
+const ASSET_PLACEMENT_MIGRATION = '20260903120000_add_project_asset_section_placements.sql';
+const ASSET_MULTI_PLACEMENT_MIGRATION = '20260908120000_add_project_asset_multi_placements.sql';
 const AT = '2026-08-26T16:00:00.000Z';
 
 let admin;
@@ -84,7 +86,9 @@ before(async () => {
   `);
   const migrationDir = path.join(ROOT, 'supabase', 'migrations');
   const migrations = (await readdir(migrationDir))
-    .filter((name) => name.endsWith('.sql') && name !== SECTION_MIGRATION && name !== ASSET_MIGRATION)
+    .filter((name) => name.endsWith('.sql') && name !== SECTION_MIGRATION &&
+      name !== ASSET_MIGRATION && name !== ASSET_PLACEMENT_MIGRATION &&
+      name !== ASSET_MULTI_PLACEMENT_MIGRATION)
     .sort();
   for (const migration of migrations) {
     await admin.query(await readFile(path.join(migrationDir, migration), 'utf8'));
@@ -156,6 +160,31 @@ test('RLS and composite ownership prevent cross-owner section reads and creation
     `, [AT]), /violates foreign key constraint|row-level security/i);
     assert.equal((await admin.query(`select count(*)::integer count
       from public.project_sections where id = 'foreign-write'`)).rows[0].count, 0);
+  } finally {
+    await ownerA.end();
+    await ownerB.end();
+  }
+});
+
+test('Project activity touch is authenticated, owner-scoped, and monotonic', async () => {
+  const ownerA = await authenticatedClient(OWNER_A);
+  const ownerB = await authenticatedClient(OWNER_B);
+  const later = '2026-08-27T18:00:00.000Z';
+  try {
+    await ownerA.query(`select public.touch_project_activity('existing-a', $1)`, [later]);
+    assert.equal((await ownerA.query(
+      `select updated_at = $1::timestamptz matches from public.projects where id='existing-a'`,
+      [later],
+    )).rows[0].matches, true);
+    await ownerA.query(`select public.touch_project_activity('existing-a', $1)`, [AT]);
+    assert.equal((await ownerA.query(
+      `select updated_at = $1::timestamptz matches from public.projects where id='existing-a'`,
+      [later],
+    )).rows[0].matches, true);
+    await assert.rejects(
+      ownerB.query(`select public.touch_project_activity('existing-a', $1)`, [later]),
+      /Project was not found/,
+    );
   } finally {
     await ownerA.end();
     await ownerB.end();

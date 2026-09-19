@@ -27,6 +27,7 @@ const LIMITS = {
   tasks: 20,
 } as const;
 const MAX_RESULT_CHARACTERS = 44_000;
+const MAX_RESOURCE_PLACEMENTS = 10;
 const ARRAY_SECTIONS = [
   'openTasks', 'milestones', 'deliverables', 'currentKnowledge',
   'unresolvedQuestions', 'currentDecisions', 'recentWorkSessions', 'resources',
@@ -209,7 +210,16 @@ async function getProjectContext(
       ...optional('rationale', truncate(value.rationale, 1_000)),
       statement: truncate(value.statement, 1_000) ?? value.statement,
     }));
-    result.resources = resources.slice(0, LIMITS.resources).map((value) => ({
+    const boundedResources = resources.slice(0, LIMITS.resources);
+    const placementsByAsset = new Map(await Promise.all(boundedResources
+      .filter((resource) => resource.resourceKind === 'uploaded_asset')
+      .map(async (resource) => [
+        resource.id,
+        await repository.listAssetPlacements(projectId, resource.id),
+      ] as const)));
+    result.resources = boundedResources.map((value) => {
+      const placements = placementsByAsset.get(value.id);
+      return ({
       ...optional('byteSize', value.byteSize),
       ...optional('createdAt', value.storagePath ? value.createdAt : undefined),
       ...optional('description', truncate(value.description, 600)),
@@ -217,10 +227,14 @@ async function getProjectContext(
       ...optional('mimeType', truncate(value.mimeType, 200)),
       name: truncate(value.name, 300) ?? value.name,
       ...optional('originalFilename', truncate(value.originalFilename, 300)),
-      role: value.role, ...optional('sectionId', value.sectionId),
-      ...optional('sectionTitle', sections.find((section) => section.id === value.sectionId)?.title),
+      ...placements ? { placements: placements.slice(0, MAX_RESOURCE_PLACEMENTS).map((placement) => ({
+        sectionId: placement.sectionId,
+        ...optional('sectionTitle', sections.find((section) => section.id === placement.sectionId)?.title),
+      })), placementsTruncated: placements.length > MAX_RESOURCE_PLACEMENTS } : {},
+      role: value.role,
       ...optional('status', value.status), type: value.type,
-    }));
+      });
+    });
   }
 
   if (includeWork || includeHistory) {

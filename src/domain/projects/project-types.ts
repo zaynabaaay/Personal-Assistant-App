@@ -193,6 +193,37 @@ export type ProjectAsset = ProjectResource & {
   storagePath: string;
 };
 
+/** A placement read deliberately contains association metadata only. */
+export type ProjectAssetSectionPlacement = {
+  assetId: ProjectEntityId;
+  createdAt: ISODateTime;
+  sectionId: ProjectEntityId;
+};
+
+/**
+ * Project-level uploaded-asset metadata. Storage identity and the legacy
+ * section relationship are intentionally absent from this read shape.
+ */
+export type ProjectGlobalAsset = {
+  byteSize: number;
+  createdAt: ISODateTime;
+  description?: string;
+  height?: number;
+  id: ProjectEntityId;
+  mimeType: string;
+  name: string;
+  originalFilename: string;
+  projectId: ProjectId;
+  resourceKind: 'uploaded_asset';
+  role: 'reference' | 'working';
+  sourceMetadata?: Record<string, boolean | number | string | null>;
+  sourceSessionId?: ProjectEntityId;
+  status: 'current' | 'archived';
+  type: ProjectResource['type'];
+  updatedAt: ISODateTime;
+  width?: number;
+};
+
 export type ProjectChangeEventType =
   | 'task_completed'
   | 'knowledge_accepted'

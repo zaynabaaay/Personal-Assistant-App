@@ -7,11 +7,14 @@ import { AssistantService } from '../src/services/assistant/assistant-service.ts
 import { InMemoryProjectRepository } from '../src/services/projects/in-memory-project-repository.ts';
 import { ProjectChatService } from '../src/services/projects/project-chat-service.ts';
 import {
-  groupProjects,
   projectDescription,
   projectFallbackInitial,
+  projectLibraryCollections,
+  sortProjects,
 } from '../src/features/projects/project-presentation.ts';
 import {
+  createProjectSortPreference,
+  PROJECT_SORT_PREFERENCE_KEY,
   createProjectViewPreference,
   PROJECT_VIEW_PREFERENCE_KEY,
 } from '../src/features/projects/project-view-preference.ts';
@@ -40,17 +43,26 @@ test('Project presentation uses persisted identity copy and a cover-free fallbac
   assert.equal(projectFallbackInitial(project('a')), 'A');
 });
 
-test('Active, Paused, and Archived collections preserve existing status semantics', () => {
-  const grouped = groupProjects([
+test('normal lifecycle statuses share one library while archived Projects remain separate', () => {
+  const grouped = projectLibraryCollections([
     project('a', 'active'),
     project('b', 'paused'),
     project('c', 'archived'),
     project('d', 'planned'),
-  ]);
-  assert.deepEqual(grouped.active.map(({ id }) => id), ['a']);
-  assert.deepEqual(grouped.paused.map(({ id }) => id), ['b']);
+  ], 'name');
+  assert.deepEqual(grouped.projects.map(({ id }) => id), ['a', 'b', 'd']);
   assert.deepEqual(grouped.archived.map(({ id }) => id), ['c']);
-  assert.deepEqual(grouped.other.map(({ id }) => id), ['d']);
+});
+
+test('Recent, created, and name sorts are deterministic', () => {
+  const values = [
+    project('z', 'planned', { createdAt: '2026-01-01T00:00:00.000Z', name: 'Same', updatedAt: '2026-03-01T00:00:00.000Z' }),
+    project('a', 'paused', { createdAt: '2026-02-01T00:00:00.000Z', name: 'Same', updatedAt: '2026-03-01T00:00:00.000Z' }),
+    project('b', 'completed', { createdAt: '2026-02-01T00:00:00.000Z', name: 'Alpha', updatedAt: '2026-04-01T00:00:00.000Z' }),
+  ];
+  assert.deepEqual(sortProjects(values, 'recent').map(({ id }) => id), ['b', 'a', 'z']);
+  assert.deepEqual(sortProjects(values, 'created').map(({ id }) => id), ['b', 'a', 'z']);
+  assert.deepEqual(sortProjects(values, 'name').map(({ id }) => id), ['b', 'a', 'z']);
 });
 
 test('list/grid preference loads safely and persists through the existing storage dependency', async () => {
@@ -63,6 +75,18 @@ test('list/grid preference loads safely and persists through the existing storag
   await preference.save('grid');
   assert.equal(values.get(PROJECT_VIEW_PREFERENCE_KEY), 'grid');
   assert.equal(await preference.load(), 'grid');
+});
+
+test('sort preference reuses local storage safely and defaults to Recent', async () => {
+  const values = new Map();
+  const preference = createProjectSortPreference({
+    getItem: async (key) => values.get(key) ?? null,
+    setItem: async (key, value) => { values.set(key, value); },
+  });
+  assert.equal(await preference.load(), 'recent');
+  await preference.save('name');
+  assert.equal(values.get(PROJECT_SORT_PREFERENCE_KEY), 'name');
+  assert.equal(await preference.load(), 'name');
 });
 
 test('Project chat uses persisted work-session provenance and never leaks sessions across Projects', async () => {
@@ -183,18 +207,24 @@ test('assistant Project scope is explicit, bounded, and forwarded independently 
   assert.equal(isAssistantApiRequest({ ...requests[0], projectScope: { projectId: '' } }), false);
 });
 
-test('Projects library and creation UI surface only supported persisted identity fields', async () => {
+test('Projects library is a continuous recency-driven collection without status hierarchy', async () => {
   const [library, creation] = await Promise.all([
     read('../src/features/projects/projects-screen.tsx'),
     read('../src/features/projects/new-project-screen.tsx'),
   ]);
-  const item = library.slice(library.indexOf('function ProjectItem'), library.indexOf('function ProjectSection'));
+  const item = library.slice(library.indexOf('function ProjectRow'), library.indexOf('export default function ProjectsScreen'));
   assert.match(item, /project\.name/);
   assert.match(item, /projectDescription\(project\)/);
-  assert.doesNotMatch(item, /project\.status|task|progress|updatedAt|file/i);
-  assert.match(library, /testID=\{`projects-\$\{value\}-view`\}/);
-  assert.match(library, /\(\['list', 'grid'\] as const\)/);
+  assert.doesNotMatch(item, /project\.status|task|progress|file/i);
+  assert.match(item, /projectRecencyLabel\(project\.updatedAt\)/);
+  assert.match(library, /testID="projects-library"/);
+  assert.match(library, /label: 'Recent', value: 'recent'/);
+  assert.match(library, /label: 'Created', value: 'created'/);
+  assert.match(library, /label: 'Name', value: 'name'/);
+  assert.doesNotMatch(library, /title="Active"|title="Other"|projects-section-active|projects-section-other/);
+  assert.doesNotMatch(library, /quietSection|opacity: 0\.78/);
   assert.match(library, /testID="project-cover-fallback"/);
+  assert.match(library, /testID="projects-archive-section"/);
   assert.match(creation, /projectService\.createProject/);
   assert.match(creation, /description: description\.trim\(\)/);
   assert.match(creation, /status: 'active'/);

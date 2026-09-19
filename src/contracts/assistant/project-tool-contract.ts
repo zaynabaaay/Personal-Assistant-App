@@ -100,6 +100,11 @@ export type AssistantProjectWorkSession = {
   title?: string;
 };
 
+export type AssistantProjectResourcePlacement = {
+  sectionId: string;
+  sectionTitle?: string;
+};
+
 export type AssistantProjectResource = {
   byteSize?: number;
   createdAt?: string;
@@ -109,9 +114,9 @@ export type AssistantProjectResource = {
   mimeType?: string;
   name: string;
   originalFilename?: string;
+  placements?: AssistantProjectResourcePlacement[];
+  placementsTruncated?: boolean;
   role: string;
-  sectionId?: string;
-  sectionTitle?: string;
   status?: string;
   type: string;
 };
@@ -270,13 +275,19 @@ function isResource(value: unknown) {
   return isStringRecord(
     value,
     ['byteSize', 'createdAt', 'description', 'externalUrl', 'id', 'mimeType', 'name',
-      'originalFilename', 'role', 'sectionId', 'sectionTitle', 'status', 'type'],
+      'originalFilename', 'placements', 'placementsTruncated', 'role', 'status', 'type'],
     ['id', 'name', 'role', 'type'],
   ) && (value.byteSize === undefined || typeof value.byteSize === 'number') &&
     isOptionalString(value.createdAt) && isOptionalString(value.description) &&
     isOptionalString(value.externalUrl) && isOptionalString(value.mimeType) &&
-    isOptionalString(value.originalFilename) && isOptionalString(value.sectionId) &&
-    isOptionalString(value.sectionTitle) && isOptionalString(value.status);
+    isOptionalString(value.originalFilename) && isOptionalString(value.status) &&
+    (value.placements === undefined || (
+      Array.isArray(value.placements) && value.placements.length <= 10 &&
+      value.placements.every((placement) => isStringRecord(
+        placement, ['sectionId', 'sectionTitle'], ['sectionId'],
+      ) && isOptionalString(placement.sectionTitle))
+    )) &&
+    (value.placementsTruncated === undefined || typeof value.placementsTruncated === 'boolean');
 }
 
 function isChange(value: unknown) {
@@ -382,7 +393,7 @@ export const ASSISTANT_PROJECT_TOOL_CONTRACTS = [
   ),
   projectToolContract(
     'get_project_context',
-    'Read a bounded, current view of one authenticated user Project. Choose the smallest useful focus: work for tasks/milestones/sessions, knowledge for accepted facts/decisions/questions/resources, history for recent sessions/changes, overview for status, and comprehensive only when several sections are truly needed. Uploaded resource fields are metadata proving only that a file exists; filenames, labels, MIME types, sizes, and sections are not evidence of file contents. This tool does not retrieve or analyze file bytes. Use the result as evidence for a natural answer, not as a report template. This tool never returns raw session transcripts and never modifies data.',
+    'Read a bounded, current view of one authenticated user Project. Choose the smallest useful focus: work for tasks/milestones/sessions, knowledge for accepted facts/decisions/questions/resources, history for recent sessions/changes, overview for status, and comprehensive only when several sections are truly needed. Each uploaded resource appears once and placements is its actual, deterministically ordered section membership, bounded to 10; placementsTruncated says when more exist. Never infer complete membership from a singular compatibility section. Uploaded resource fields are metadata proving only that a file exists; filenames, labels, MIME types, sizes, placements, and timestamps are not evidence of file contents. This tool does not retrieve or analyze file bytes. Use the result as evidence for a natural answer, not as a report template. This tool never returns raw session transcripts and never modifies data.',
     {
       type: 'object',
       properties: {

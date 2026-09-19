@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import { Image, Linking, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { ProjectAsset, ProjectSection } from '@/domain/projects';
+import type { ProjectAsset, ProjectGlobalAsset, ProjectSection } from '@/domain/projects';
 import { pickProjectDocument, pickProjectImage } from '@/services/projects/project-asset-picker';
 import { projectAssetService } from '@/services/projects/project-client';
 import {
@@ -24,7 +24,7 @@ function readableSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function typeLabel(asset: ProjectAsset) {
+function typeLabel(asset: ProjectGlobalAsset) {
   if (asset.type === 'image') return 'Image';
   if (asset.type === 'pdf') return 'PDF';
   if (asset.type === 'spreadsheet') return 'Spreadsheet';
@@ -32,23 +32,34 @@ function typeLabel(asset: ProjectAsset) {
 }
 
 function AssetDetail({ asset, getSignedUrl, invalidateSignedUrl, onChanged, onClose, onError,
-  projectId, sections, url }: {
-  asset: ProjectAsset;
-  getSignedUrl: (asset: ProjectAsset, force?: boolean) => Promise<SignedAssetUrl>;
+  projectId, sectionId, sections, url }: {
+  asset: ProjectGlobalAsset;
+  getSignedUrl: (asset: ProjectGlobalAsset, force?: boolean) => Promise<SignedAssetUrl>;
   invalidateSignedUrl: (assetId: string) => void;
-  onChanged: (asset: ProjectAsset) => void;
+  onChanged: (asset: ProjectGlobalAsset) => void;
   onClose: () => void;
   onError: (message: string | null) => void;
   projectId: string;
+  sectionId: string;
   sections: readonly ProjectSection[];
   url?: SignedAssetUrl;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(asset.name);
   const [moving, setMoving] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [placedSectionIds, setPlacedSectionIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const actionInFlight = useRef(false);
+  useEffect(() => {
+    let active = true;
+    projectAssetService.listPlacements(projectId, asset.id).then(
+      (placements) => active && setPlacedSectionIds(placements.map((placement) => placement.sectionId)),
+      () => active && setActionError('Section memberships could not be loaded.'),
+    );
+    return () => { active = false; };
+  }, [asset.id, projectId]);
   const act = async (operation: () => Promise<ProjectAsset>) => {
     if (actionInFlight.current) return;
     actionInFlight.current = true;
@@ -106,16 +117,39 @@ function AssetDetail({ asset, getSignedUrl, invalidateSignedUrl, onChanged, onCl
             <Text style={styles.metadata}>{typeLabel(asset)} · {readableSize(asset.byteSize)} · Added {new Date(asset.createdAt).toLocaleDateString()}</Text>
             <Pressable disabled={busy} onPress={() => void open()} style={styles.primary} testID="open-project-asset"><Text style={styles.primaryText}>{busy ? 'Opening…' : 'Open original'}</Text></Pressable>
             <Pressable onPress={() => setEditing(true)} style={styles.row}><Text style={styles.rowText}>Rename display name</Text></Pressable>
-            <Pressable onPress={() => setMoving((value) => !value)} style={styles.row}><Text style={styles.rowText}>Move to section</Text></Pressable>
-            {moving ? <View style={styles.sectionChoices}>
-              {sections.filter((section) => section.status === 'active' && section.id !== asset.sectionId).map((section) => (
+            <Pressable onPress={() => setAdding((value) => !value)} style={styles.row} testID="add-asset-to-section"><Text style={styles.rowText}>Add to section</Text></Pressable>
+            {adding ? <View style={styles.sectionChoices}>
+              {sections.filter((section) => section.status === 'active' &&
+                !placedSectionIds.includes(section.id)).map((section) => (
                 <Pressable disabled={busy} key={section.id} onPress={() => void act(async () => {
-                  const updated = await projectAssetService.reassign(projectId, asset.id, section.id);
+                  const updated = await projectAssetService.addToSection(projectId, asset.id, section.id);
+                  setPlacedSectionIds((current) => [...new Set([...current, section.id])]);
+                  setAdding(false);
+                  return updated;
+                })} style={styles.sectionChoice}><Text style={styles.sectionChoiceText}>{section.title}</Text></Pressable>
+              ))}
+            </View> : null}
+            <Pressable onPress={() => setMoving((value) => !value)} style={styles.row}><Text style={styles.rowText}>Move from this section</Text></Pressable>
+            {moving ? <View style={styles.sectionChoices}>
+              {sections.filter((section) => section.status === 'active' && section.id !== sectionId).map((section) => (
+                <Pressable disabled={busy} key={section.id} onPress={() => void act(async () => {
+                  const updated = await projectAssetService.replacePlacement(
+                    projectId, asset.id, sectionId, section.id,
+                  );
+                  setPlacedSectionIds((current) => [...new Set(current
+                    .filter((value) => value !== sectionId).concat(section.id))]);
                   setMoving(false);
                   return updated;
                 })} style={styles.sectionChoice}><Text style={styles.sectionChoiceText}>{section.title}</Text></Pressable>
               ))}
             </View> : null}
+            <Pressable disabled={busy} onPress={() => void act(async () => {
+              const updated = await projectAssetService.removeFromSection(projectId, asset.id, sectionId);
+              setPlacedSectionIds((current) => current.filter((value) => value !== sectionId));
+              return updated;
+            })} style={styles.row} testID="remove-asset-from-section">
+              <Text style={styles.archiveText}>Remove from this section</Text>
+            </Pressable>
             <Pressable disabled={busy} onPress={() => void act(() => asset.status === 'current'
               ? projectAssetService.archive(projectId, asset.id)
               : projectAssetService.restore(projectId, asset.id))} style={styles.row}>
@@ -136,12 +170,12 @@ export function ProjectSectionAssets({ onError, projectId, section, sections }: 
   section: ProjectSection;
   sections: readonly ProjectSection[];
 }) {
-  const [assets, setAssets] = useState<ProjectAsset[]>([]);
+  const [assets, setAssets] = useState<ProjectGlobalAsset[]>([]);
   const [urls, setUrls] = useState<Record<string, SignedAssetUrl>>({});
   const [addOpen, setAddOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [selected, setSelected] = useState<ProjectAsset | null>(null);
+  const [selected, setSelected] = useState<ProjectGlobalAsset | null>(null);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const documentPickerAfterDismiss = useRef(false);
   const uploadInFlight = useRef(false);
@@ -165,7 +199,7 @@ export function ProjectSectionAssets({ onError, projectId, section, sections }: 
     return () => { active = false; };
   }, [assets, onError, urls]);
 
-  const getSignedUrl = async (asset: ProjectAsset, force = false) => {
+  const getSignedUrl = async (asset: ProjectGlobalAsset, force = false) => {
     const current = urls[asset.id];
     if (!force && isProjectAssetSignedUrlFresh(current)) return current as SignedAssetUrl;
     const fresh = await projectAssetService.signedUrl(asset);
@@ -226,11 +260,11 @@ export function ProjectSectionAssets({ onError, projectId, section, sections }: 
     void pickAndUploadDocument();
   };
 
-  const changed = (asset: ProjectAsset) => {
-    setAssets((current) => asset.sectionId === section.id
-      ? current.map((value) => value.id === asset.id ? asset : value)
-      : current.filter((value) => value.id !== asset.id));
-    setSelected(asset.sectionId === section.id ? asset : null);
+  const changed = (asset: ProjectGlobalAsset) => {
+    void projectAssetService.list(projectId, section.id, true).then((values) => {
+      setAssets(values);
+      setSelected(values.some((value) => value.id === asset.id) ? asset : null);
+    }, () => onError('Project material could not be refreshed.'));
   };
   const current = assets.filter((asset) => asset.status === 'current');
   const archived = assets.filter((asset) => asset.status === 'archived');
@@ -269,7 +303,7 @@ export function ProjectSectionAssets({ onError, projectId, section, sections }: 
         </Pressable>
       </Pressable>
     </Modal>
-    {selected ? <AssetDetail asset={selected} getSignedUrl={getSignedUrl} invalidateSignedUrl={invalidateSignedUrl} onChanged={changed} onClose={() => setSelected(null)} onError={onError} projectId={projectId} sections={sections} url={urls[selected.id]} /> : null}
+    {selected ? <AssetDetail asset={selected} getSignedUrl={getSignedUrl} invalidateSignedUrl={invalidateSignedUrl} onChanged={changed} onClose={() => setSelected(null)} onError={onError} projectId={projectId} sectionId={section.id} sections={sections} url={urls[selected.id]} /> : null}
   </View>;
 }
 

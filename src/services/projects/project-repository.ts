@@ -1,10 +1,12 @@
 import type {
   Project,
   ProjectAsset,
+  ProjectAssetSectionPlacement,
   ProjectChangeEvent,
   ProjectDecision,
   ProjectDeliverable,
   ProjectKnowledgeItem,
+  ProjectGlobalAsset,
   ProjectMilestone,
   ProjectResource,
   ProjectSection,
@@ -54,6 +56,7 @@ export type ProjectRepositoryChanges = {
 
 export interface ProjectRepository {
   addChangeEvent(event: ProjectChangeEvent): Promise<void>;
+  addAssetPlacement(projectId: string, assetId: string, sectionId: string): Promise<ProjectAsset>;
   beginAssetUpload(input: BeginProjectAssetUploadInput): Promise<ProjectAssetUploadReservation>;
   finalizeAssetUpload(attemptId: string): Promise<ProjectAsset>;
   getDecision(id: string): Promise<ProjectDecision | null>;
@@ -66,18 +69,35 @@ export interface ProjectRepository {
   getTask(id: string): Promise<ProjectTask | null>;
   getWorkSession(id: string): Promise<ProjectWorkSession | null>;
   listChangeEvents(projectId: string): Promise<ProjectChangeEvent[]>;
+  listAssetPlacements(
+    projectId: string,
+    assetId: string,
+  ): Promise<ProjectAssetSectionPlacement[]>;
   listDecisions(projectId: string, limit?: number): Promise<ProjectDecision[]>;
   listDeliverables(projectId: string): Promise<ProjectDeliverable[]>;
   listKnowledgeItems(projectId: string, limit?: number): Promise<ProjectKnowledgeItem[]>;
   listMilestones(projectId: string): Promise<ProjectMilestone[]>;
   listProjects(limit?: number): Promise<Project[]>;
+  listProjectAssets(projectId: string): Promise<ProjectGlobalAsset[]>;
   listResources(projectId: string): Promise<ProjectResource[]>;
+  listSectionAssetPlacements(
+    projectId: string,
+    sectionId: string,
+  ): Promise<ProjectAssetSectionPlacement[]>;
+  listSectionAssets(projectId: string, sectionId: string): Promise<ProjectGlobalAsset[]>;
   listSections(projectId: string): Promise<ProjectSection[]>;
   listTasks(projectId: string, limit?: number): Promise<ProjectTask[]>;
   listWorkSessionEntries(sessionId: string): Promise<ProjectWorkSessionEntry[]>;
   listWorkSessions(projectId: string, limit?: number): Promise<ProjectWorkSession[]>;
   markAssetUploadCleaned(attemptId: string): Promise<void>;
   reconcileAssetUploads(projectId: string, sectionId: string): Promise<void>;
+  removeAssetPlacement(projectId: string, assetId: string, sectionId: string): Promise<ProjectAsset>;
+  replaceAssetPlacement(
+    projectId: string,
+    assetId: string,
+    sourceSectionId: string,
+    targetSectionId: string,
+  ): Promise<ProjectAsset>;
   saveDecision(decision: ProjectDecision): Promise<void>;
   saveDeliverable(deliverable: ProjectDeliverable): Promise<void>;
   saveKnowledgeItem(item: ProjectKnowledgeItem): Promise<void>;
@@ -88,6 +108,7 @@ export interface ProjectRepository {
   saveTask(task: ProjectTask): Promise<void>;
   saveWorkSession(session: ProjectWorkSession): Promise<void>;
   saveWorkSessionEntry(entry: ProjectWorkSessionEntry): Promise<void>;
+  touchProjectActivity(projectId: string, occurredAt: string): Promise<void>;
   saveAtomically(changes: ProjectRepositoryChanges): Promise<void>;
   reorderSections(
     projectId: string,

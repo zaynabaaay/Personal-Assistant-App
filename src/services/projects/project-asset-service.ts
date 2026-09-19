@@ -1,4 +1,4 @@
-import type { ProjectAsset, ProjectResource } from '@/domain/projects';
+import type { ProjectAsset, ProjectGlobalAsset, ProjectResource } from '@/domain/projects';
 
 import { getSupabaseClient } from '../auth/supabase-client';
 import type {
@@ -6,6 +6,8 @@ import type {
   ProjectAssetUploadReservation,
   ProjectRepository,
 } from './project-repository';
+import { ProjectService } from './project-service';
+import type { ProjectActivityTouchDiagnostic } from './project-service';
 
 export const PROJECT_ASSET_BUCKET = 'project-assets';
 export const PROJECT_ASSET_MAX_BYTES = 25 * 1024 * 1024;
@@ -139,8 +141,8 @@ export type ProjectAssetStorage = {
 export type ProjectAssetSignedUrl = { expiresAt: number; url: string };
 
 type OpenProjectAssetOriginalOptions = {
-  asset: ProjectAsset;
-  getSignedUrl: (asset: ProjectAsset, force?: boolean) => Promise<ProjectAssetSignedUrl>;
+  asset: ProjectGlobalAsset;
+  getSignedUrl: (asset: ProjectGlobalAsset, force?: boolean) => Promise<ProjectAssetSignedUrl>;
   invalidateSignedUrl: (assetId: string) => void;
   onBusyChange: (busy: boolean) => void;
   onError: (message: string | null) => void;
@@ -217,6 +219,7 @@ type ProjectAssetServiceOptions = {
   createId?: () => string;
   loadBinary?: (selection: PickedProjectAsset) => Promise<ArrayBuffer>;
   now?: () => Date;
+  onActivityTouchError?: (diagnostic: ProjectActivityTouchDiagnostic) => void;
   storage: ProjectAssetStorage;
 };
 
@@ -272,6 +275,7 @@ export class ProjectAssetService {
   private readonly createId: () => string;
   private readonly loadBinary: (selection: PickedProjectAsset) => Promise<ArrayBuffer>;
   private readonly now: () => Date;
+  private readonly projectService: ProjectService;
   private readonly uploads = new Map<string, Promise<ProjectAsset>>();
 
   constructor(private readonly repository: ProjectRepository, private readonly options: ProjectAssetServiceOptions) {
@@ -282,14 +286,44 @@ export class ProjectAssetService {
       return response.arrayBuffer();
     });
     this.now = options.now ?? (() => new Date());
+    this.projectService = new ProjectService(repository, {
+      now: this.now,
+      ...(options.onActivityTouchError
+        ? { onActivityTouchError: options.onActivityTouchError }
+        : {}),
+    });
   }
 
   async list(projectId: string, sectionId?: string, includeArchived = false) {
     await this.requireProject(projectId);
-    if (sectionId) await this.repository.reconcileAssetUploads(projectId, sectionId);
-    return (await this.repository.listResources(projectId)).filter((resource): resource is ProjectAsset =>
-      isProjectAsset(resource) && (!sectionId || resource.sectionId === sectionId) &&
-      (includeArchived || resource.status === 'current'));
+    if (!sectionId) return (await this.repository.listProjectAssets(projectId))
+      .filter((asset) => includeArchived || asset.status === 'current');
+    await this.repository.reconcileAssetUploads(projectId, sectionId);
+    return (await this.repository.listSectionAssets(projectId, sectionId))
+      .filter((asset) => includeArchived || asset.status === 'current');
+  }
+
+  async listPlacements(projectId: string, assetId: string) {
+    await this.requireAsset(projectId, assetId);
+    return this.repository.listAssetPlacements(projectId, assetId);
+  }
+
+  async addToSection(projectId: string, assetId: string, sectionId: string) {
+    await this.requireAsset(projectId, assetId);
+    await this.requireActiveSection(projectId, sectionId);
+    return this.repository.addAssetPlacement(projectId, assetId, sectionId);
+  }
+
+  async removeFromSection(projectId: string, assetId: string, sectionId: string) {
+    await this.requireAsset(projectId, assetId);
+    return this.repository.removeAssetPlacement(projectId, assetId, sectionId);
+  }
+
+  async replacePlacement(projectId: string, assetId: string, sourceSectionId: string,
+    targetSectionId: string) {
+    await this.requireAsset(projectId, assetId);
+    await this.requireActiveSection(projectId, targetSectionId);
+    return this.repository.replaceAssetPlacement(projectId, assetId, sourceSectionId, targetSectionId);
   }
 
   async upload(projectId: string, sectionId: string, selection: PickedProjectAsset) {
@@ -309,11 +343,8 @@ export class ProjectAssetService {
     try { return await operation; } finally { this.uploads.delete(identity.attemptId); }
   }
 
-  async signedUrl(asset: ProjectAsset) {
+  async signedUrl(asset: Pick<ProjectGlobalAsset, 'id' | 'projectId'>) {
     const authoritative = await this.requireAsset(asset.projectId, asset.id);
-    if (authoritative.storagePath !== asset.storagePath) {
-      throw new Error('The asset Storage identity no longer matches.');
-    }
     return this.options.storage.createSignedUrl(authoritative.storagePath);
   }
 
@@ -322,8 +353,10 @@ export class ProjectAssetService {
     const name = nameInput.trim().replace(/\s+/g, ' ');
     if (!name || name.length > 180) throw new Error('Asset names must be between 1 and 180 characters.');
     if (asset.name === name) return asset;
-    const updated = { ...asset, name, updatedAt: this.now().toISOString() };
+    const occurredAt = this.now().toISOString();
+    const updated = { ...asset, name, updatedAt: occurredAt };
     await this.repository.saveResource(updated);
+    await this.projectService.recordActivity(projectId, occurredAt);
     return updated;
   }
 
@@ -331,9 +364,7 @@ export class ProjectAssetService {
     const asset = await this.requireAsset(projectId, assetId);
     await this.requireActiveSection(projectId, sectionId);
     if (asset.sectionId === sectionId) return asset;
-    const updated = { ...asset, sectionId, updatedAt: this.now().toISOString() };
-    await this.repository.saveResource(updated);
-    return updated;
+    return this.repository.replaceAssetPlacement(projectId, assetId, asset.sectionId, sectionId);
   }
 
   async archive(projectId: string, assetId: string) { return this.setStatus(projectId, assetId, 'archived'); }
@@ -376,7 +407,9 @@ export class ProjectAssetService {
       originalFilename: normalized.filename, picker: selection.source, projectId, sectionId,
       ...(selection.width ? { width: selection.width } : {}),
     });
-    if (reservation.status === 'finalized') return this.repository.finalizeAssetUpload(identity.attemptId);
+    if (reservation.status === 'finalized') {
+      return this.repository.finalizeAssetUpload(identity.attemptId);
+    }
 
     if (!reservation.objectExists) {
       const contents = await this.loadBinary(selection);
@@ -398,10 +431,14 @@ export class ProjectAssetService {
     }
 
     try {
-      return await this.repository.finalizeAssetUpload(identity.attemptId);
+      const asset = await this.repository.finalizeAssetUpload(identity.attemptId);
+      await this.projectService.recordActivity(projectId, this.now().toISOString());
+      return asset;
     } catch (firstFailure) {
       try {
-        return await this.repository.finalizeAssetUpload(identity.attemptId);
+        const asset = await this.repository.finalizeAssetUpload(identity.attemptId);
+        await this.projectService.recordActivity(projectId, this.now().toISOString());
+        return asset;
       } catch {
         await this.cleanupUnfinalized(reservation).catch(() => undefined);
         throw firstFailure;

@@ -19,7 +19,6 @@ type ChatsDrawerProps = {
   isOpen: boolean;
   onClose: () => void;
   onOpenFullChats: () => void;
-  onOpenProjects: () => void;
   onSelectChat: (conversationId: string) => void;
 };
 
@@ -27,7 +26,6 @@ export function ChatsDrawer({
   isOpen,
   onClose,
   onOpenFullChats,
-  onOpenProjects,
   onSelectChat,
 }: ChatsDrawerProps) {
   const { width: viewportWidth } = useWindowDimensions();
@@ -144,15 +142,6 @@ export function ChatsDrawer({
         <View style={styles.footer}>
           <Pressable
             accessibilityRole="button"
-            onPress={onOpenProjects}
-            style={({ pressed }) => [styles.footerButton, pressed && styles.pressed]}
-            testID="open-projects"
-          >
-            <Text style={styles.projectsText}>Projects</Text>
-            <Text style={styles.projectsArrow}>›</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
             onPress={onOpenFullChats}
             style={({ pressed }) => [styles.footerButton, pressed && styles.pressed]}
           >
@@ -210,8 +199,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 14,
   },
-  projectsText: { color: '#EEEEF0', fontSize: 14, fontWeight: '600' },
-  projectsArrow: { color: '#6F6F75', fontSize: 20 },
   fullChatsText: { color: '#A8A8AD', fontSize: 13, fontWeight: '500' },
   pressed: { opacity: 0.55 },
 });

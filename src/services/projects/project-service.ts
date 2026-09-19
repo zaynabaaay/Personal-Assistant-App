@@ -32,7 +32,18 @@ import type { ProjectRepository } from './project-repository';
 type ProjectServiceOptions = {
   createId?: () => string;
   now?: () => Date;
+  onActivityTouchError?: (diagnostic: ProjectActivityTouchDiagnostic) => void;
 };
+
+export type ProjectActivityTouchDiagnostic = {
+  cause: unknown;
+  occurredAt: string;
+  projectId: string;
+};
+
+export type ProjectActivityTouchResult =
+  | { status: 'failed' }
+  | { status: 'updated' };
 
 type SupersededValue<T> = {
   previous: T;
@@ -180,12 +191,16 @@ function sameValue(left: unknown, right: unknown) {
 export class ProjectService {
   private readonly createId: () => string;
   private readonly now: () => Date;
+  private readonly onActivityTouchError: (diagnostic: ProjectActivityTouchDiagnostic) => void;
   private readonly repository: ProjectRepository;
 
   constructor(repository: ProjectRepository, options: ProjectServiceOptions = {}) {
     this.repository = repository;
     this.createId = options.createId ?? defaultCreateId;
     this.now = options.now ?? (() => new Date());
+    this.onActivityTouchError = options.onActivityTouchError ?? ((diagnostic) => {
+      console.warn('Project recency could not be updated.', diagnostic);
+    });
   }
 
   async createProject(input: CreateProjectInput): Promise<ProjectWriteResult<Project>> {
@@ -239,6 +254,19 @@ export class ProjectService {
     return this.repository.listSections(projectId);
   }
 
+  async recordActivity(
+    projectId: string,
+    occurredAt = this.currentTime(),
+  ): Promise<ProjectActivityTouchResult> {
+    try {
+      await this.repository.touchProjectActivity(projectId, occurredAt);
+      return { status: 'updated' };
+    } catch (cause) {
+      this.onActivityTouchError({ cause, occurredAt, projectId });
+      return { status: 'failed' };
+    }
+  }
+
   async addSection(
     projectId: string,
     titleInput: string,
@@ -261,6 +289,7 @@ export class ProjectService {
       updatedAt: occurredAt,
     };
     await this.repository.saveSection(section);
+    await this.recordActivity(projectId, occurredAt);
     return { outcome: 'created', value: section };
   }
 
@@ -278,8 +307,10 @@ export class ProjectService {
     if (section.title === title) return { outcome: 'unchanged', value: section };
     const sections = await this.repository.listSections(projectId);
     this.rejectDuplicateActiveSectionTitle(sections, title, section.id);
-    const updated = { ...section, title, updatedAt: this.currentTime() };
+    const occurredAt = this.currentTime();
+    const updated = { ...section, title, updatedAt: occurredAt };
     await this.repository.saveSection(updated);
+    await this.recordActivity(projectId, occurredAt);
     return { outcome: 'updated', value: updated };
   }
 
@@ -393,6 +424,7 @@ export class ProjectService {
       updatedAt: occurredAt,
     } as ProjectTask;
     await this.repository.saveTask(task);
+    await this.recordActivity(projectId, occurredAt);
     return { outcome: 'created', value: task };
   }
 
@@ -413,6 +445,7 @@ export class ProjectService {
     if (sameValue(current, updated)) return { outcome: 'unchanged', value: current };
     updated.updatedAt = this.currentTime();
     await this.repository.saveTask(updated);
+    await this.recordActivity(projectId, updated.updatedAt);
     return { outcome: 'updated', value: updated };
   }
 
@@ -430,6 +463,7 @@ export class ProjectService {
       ...input.targetDate ? { targetDate: requireDate(input.targetDate, 'Milestone target date') } : {},
       updatedAt: occurredAt } as ProjectMilestone;
     await this.repository.saveMilestone(value);
+    await this.recordActivity(projectId, occurredAt);
     return { outcome: 'created', value };
   }
 
@@ -443,6 +477,7 @@ export class ProjectService {
     };
     if (sameValue(current, updated)) return { outcome: 'unchanged', value: current };
     updated.updatedAt = this.currentTime(); await this.repository.saveMilestone(updated);
+    await this.recordActivity(projectId, updated.updatedAt);
     return { outcome: 'updated', value: updated };
   }
 
@@ -461,6 +496,7 @@ export class ProjectService {
       position: values.reduce((max, item) => Math.max(max, item.position), -1) + 1,
       projectId, status: input.status ?? 'planned', updatedAt: occurredAt } as ProjectDeliverable;
     await this.repository.saveDeliverable(value);
+    await this.recordActivity(projectId, occurredAt);
     return { outcome: 'created', value };
   }
 
@@ -476,6 +512,7 @@ export class ProjectService {
     };
     if (sameValue(current, updated)) return { outcome: 'unchanged', value: current };
     updated.updatedAt = this.currentTime(); await this.repository.saveDeliverable(updated);
+    await this.recordActivity(projectId, updated.updatedAt);
     return { outcome: 'updated', value: updated };
   }
 
@@ -491,7 +528,9 @@ export class ProjectService {
     const changeEvent = this.createChangeEvent({ after: { status: 'current' }, entityId: value.id,
       entityType: 'knowledge', eventType: 'knowledge_accepted', occurredAt, projectId,
       summary: `Accepted project knowledge: ${value.title ?? value.content}` });
-    await this.repository.saveAtomically({ changeEvents: [changeEvent], knowledgeItems: [value] });
+    await this.repository.saveAtomically(await this.withActivity(projectId, occurredAt, {
+      changeEvents: [changeEvent], knowledgeItems: [value],
+    }));
     return { outcome: 'created', value };
   }
 
@@ -504,6 +543,7 @@ export class ProjectService {
     const value: ProjectDecision = { createdAt: occurredAt, decidedAt: occurredAt, id: this.createId(), projectId,
       ...optionalText(input.rationale) ? { rationale: optionalText(input.rationale) } : {}, statement, status: 'active', updatedAt: occurredAt } as ProjectDecision;
     await this.repository.saveDecision(value);
+    await this.recordActivity(projectId, occurredAt);
     return { outcome: 'created', value };
   }
 
@@ -553,10 +593,10 @@ export class ProjectService {
       summary: `Accepted project knowledge: ${accepted.title ?? accepted.content}`,
     });
 
-    await this.repository.saveAtomically({
+    await this.repository.saveAtomically(await this.withActivity(accepted.projectId, occurredAt, {
       changeEvents: [changeEvent],
       knowledgeItems: [accepted],
-    });
+    }));
 
     return { changeEvent, value: accepted };
   }
@@ -581,10 +621,10 @@ export class ProjectService {
       summary: `Closed work session${closed.title ? ` “${closed.title}”` : ''}.`,
     });
 
-    await this.repository.saveAtomically({
+    await this.repository.saveAtomically(await this.withActivity(closed.projectId, endedAt, {
       changeEvents: [changeEvent],
       workSessions: [closed],
-    });
+    }));
 
     return { changeEvent, value: { entries, session: closed } };
   }
@@ -607,10 +647,10 @@ export class ProjectService {
       summary: `Completed task: ${completed.title}`,
     });
 
-    await this.repository.saveAtomically({
+    await this.repository.saveAtomically(await this.withActivity(completed.projectId, occurredAt, {
       changeEvents: [changeEvent],
       tasks: [completed],
-    });
+    }));
 
     return { changeEvent, value: completed };
   }
@@ -650,10 +690,10 @@ export class ProjectService {
       summary: `Replaced decision “${previous.statement}” with “${replacement.statement}”.`,
     });
 
-    await this.repository.saveAtomically({
+    await this.repository.saveAtomically(await this.withActivity(replacement.projectId, occurredAt, {
       changeEvents: [changeEvent],
       decisions: [superseded, replacement],
-    });
+    }));
 
     return {
       changeEvent,
@@ -696,10 +736,10 @@ export class ProjectService {
       summary: `Replaced project knowledge: ${previous.title ?? previous.content}`,
     });
 
-    await this.repository.saveAtomically({
+    await this.repository.saveAtomically(await this.withActivity(replacement.projectId, occurredAt, {
       changeEvents: [changeEvent],
       knowledgeItems: [superseded, replacement],
-    });
+    }));
 
     return {
       changeEvent,
@@ -711,6 +751,16 @@ export class ProjectService {
     input: Omit<ProjectChangeEvent, 'id'>,
   ): ProjectChangeEvent {
     return { ...input, id: this.createId() };
+  }
+
+  private async withActivity(
+    projectId: string,
+    occurredAt: string,
+    changes: Parameters<ProjectRepository['saveAtomically']>[0],
+  ) {
+    const project = await this.repository.getProject(projectId);
+    if (!project || occurredAt <= project.updatedAt) return changes;
+    return { ...changes, projects: [{ ...project, updatedAt: occurredAt }] };
   }
 
   private currentTime(): ISODateTime {

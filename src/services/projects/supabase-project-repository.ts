@@ -3,10 +3,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   Project,
   ProjectAsset,
+  ProjectAssetSectionPlacement,
   ProjectChangeEvent,
   ProjectDecision,
   ProjectDeliverable,
   ProjectKnowledgeItem,
+  ProjectGlobalAsset,
   ProjectMilestone,
   ProjectResource,
   ProjectSection,
@@ -215,6 +217,36 @@ function toResource(row: DatabaseRow): ProjectResource {
   } as ProjectResource;
 }
 
+function toAssetPlacement(row: DatabaseRow): ProjectAssetSectionPlacement {
+  return {
+    assetId: requiredString(row, 'asset_id'),
+    createdAt: requiredString(row, 'created_at'),
+    sectionId: requiredString(row, 'section_id'),
+  };
+}
+
+function toProjectGlobalAsset(row: DatabaseRow): ProjectGlobalAsset {
+  return {
+    byteSize: requiredNumber(row, 'byte_size'),
+    createdAt: requiredString(row, 'created_at'),
+    ...optionalField('description', optionalString(row.description)),
+    ...optionalField('height', optionalNumber(row.height)),
+    id: requiredString(row, 'id'),
+    mimeType: requiredString(row, 'mime_type'),
+    name: requiredString(row, 'name'),
+    originalFilename: requiredString(row, 'original_filename'),
+    projectId: requiredString(row, 'project_id'),
+    resourceKind: 'uploaded_asset',
+    role: requiredString(row, 'role') as ProjectGlobalAsset['role'],
+    ...optionalField('sourceMetadata', row.source_metadata),
+    ...optionalField('sourceSessionId', optionalString(row.source_session_id)),
+    status: requiredString(row, 'status') as ProjectGlobalAsset['status'],
+    type: requiredString(row, 'type') as ProjectGlobalAsset['type'],
+    updatedAt: requiredString(row, 'updated_at'),
+    ...optionalField('width', optionalNumber(row.width)),
+  } as ProjectGlobalAsset;
+}
+
 function toSection(row: DatabaseRow): ProjectSection {
   return {
     ...baseProjectEntity(row),
@@ -421,6 +453,26 @@ export class SupabaseProjectRepository implements ProjectRepository {
     if (error) throw error;
   }
 
+  async removeAssetPlacement(projectId: string, assetId: string, sectionId: string) {
+    const { data, error } = await this.getClient().rpc('remove_project_asset_from_section', {
+      p_asset_id: assetId, p_project_id: projectId, p_section_id: sectionId,
+    });
+    if (error) throw error;
+    if (!data) throw new Error('Supabase returned an invalid Project asset placement result.');
+    return toResource(data as DatabaseRow) as ProjectAsset;
+  }
+
+  async replaceAssetPlacement(projectId: string, assetId: string, sourceSectionId: string,
+    targetSectionId: string) {
+    const { data, error } = await this.getClient().rpc('replace_project_asset_section', {
+      p_asset_id: assetId, p_project_id: projectId,
+      p_source_section_id: sourceSectionId, p_target_section_id: targetSectionId,
+    });
+    if (error) throw error;
+    if (!data) throw new Error('Supabase returned an invalid Project asset placement result.');
+    return toResource(data as DatabaseRow) as ProjectAsset;
+  }
+
   private async list<T>(table: ProjectTable, column: string, value: string,
     map: (row: DatabaseRow) => T, orders: string[] = [], limit?: number,
     ascending = true) {
@@ -443,6 +495,14 @@ export class SupabaseProjectRepository implements ProjectRepository {
   }
 
   async addChangeEvent(value: ProjectChangeEvent) { await this.upsert('project_change_events', changeEventRow(value)); }
+  async addAssetPlacement(projectId: string, assetId: string, sectionId: string) {
+    const { data, error } = await this.getClient().rpc('add_project_asset_to_section', {
+      p_asset_id: assetId, p_project_id: projectId, p_section_id: sectionId,
+    });
+    if (error) throw error;
+    if (!data) throw new Error('Supabase returned an invalid Project asset placement result.');
+    return toResource(data as DatabaseRow) as ProjectAsset;
+  }
   async getDecision(id: string) { return this.getOne('project_decisions', id, toDecision); }
   async getDeliverable(id: string) { return this.getOne('project_deliverables', id, toDeliverable); }
   async getKnowledgeItem(id: string) { return this.getOne('project_knowledge_items', id, toKnowledgeItem); }
@@ -453,12 +513,58 @@ export class SupabaseProjectRepository implements ProjectRepository {
   async getTask(id: string) { return this.getOne('project_tasks', id, toTask); }
   async getWorkSession(id: string) { return this.getOne('project_work_sessions', id, toWorkSession); }
   async listChangeEvents(id: string) { return this.list('project_change_events', 'project_id', id, toChangeEvent, ['occurred_at', 'id']); }
+  async listAssetPlacements(projectId: string, assetId: string) {
+    let query = this.getClient().from('project_asset_section_placements')
+      .select('asset_id,section_id,created_at')
+      .eq('project_id', projectId)
+      .eq('asset_id', assetId);
+    if (this.ownerId) query = query.eq('owner_id', this.ownerId);
+    const { data, error } = await query.order('created_at').order('section_id');
+    if (error) throw error;
+    return (data ?? []).map((row) => toAssetPlacement(row as DatabaseRow));
+  }
   async listDecisions(id: string, limit?: number) { return this.list('project_decisions', 'project_id', id, toDecision, limit === undefined ? [] : ['updated_at', 'id'], limit, false); }
   async listDeliverables(id: string) { return this.list('project_deliverables', 'project_id', id, toDeliverable, ['position', 'id']); }
   async listKnowledgeItems(id: string, limit?: number) { return this.list('project_knowledge_items', 'project_id', id, toKnowledgeItem, limit === undefined ? [] : ['updated_at', 'id'], limit, false); }
   async listMilestones(id: string) { return this.list('project_milestones', 'project_id', id, toMilestone, ['position', 'id']); }
   async listProjects(limit?: number) { return this.listAll('projects', toProject, limit); }
+  async listProjectAssets(projectId: string) {
+    let query = this.getClient().from('project_resources')
+      .select('byte_size,created_at,description,height,id,mime_type,name,original_filename,project_id,resource_kind,role,source_metadata,source_session_id,status,type,updated_at,width')
+      .eq('project_id', projectId)
+      .eq('resource_kind', 'uploaded_asset');
+    if (this.ownerId) query = query.eq('owner_id', this.ownerId);
+    const { data, error } = await query.order('created_at').order('id');
+    if (error) throw error;
+    return (data ?? []).map((row) => toProjectGlobalAsset(row as DatabaseRow));
+  }
   async listResources(id: string) { return this.list('project_resources', 'project_id', id, toResource); }
+  async listSectionAssetPlacements(projectId: string, sectionId: string) {
+    let query = this.getClient().from('project_asset_section_placements')
+      .select('asset_id,section_id,created_at')
+      .eq('project_id', projectId)
+      .eq('section_id', sectionId);
+    if (this.ownerId) query = query.eq('owner_id', this.ownerId);
+    const { data, error } = await query.order('created_at').order('asset_id');
+    if (error) throw error;
+    return (data ?? []).map((row) => toAssetPlacement(row as DatabaseRow));
+  }
+  async listSectionAssets(projectId: string, sectionId: string) {
+    const placements = await this.listSectionAssetPlacements(projectId, sectionId);
+    const assetIds = [...new Set(placements.map(({ assetId }) => assetId))];
+    if (assetIds.length === 0) return [];
+    let query = this.getClient().from('project_resources')
+      .select('byte_size,created_at,description,height,id,mime_type,name,original_filename,project_id,resource_kind,role,source_metadata,source_session_id,status,type,updated_at,width')
+      .eq('project_id', projectId).eq('resource_kind', 'uploaded_asset').in('id', assetIds);
+    if (this.ownerId) query = query.eq('owner_id', this.ownerId);
+    const { data, error } = await query;
+    if (error) throw error;
+    const assetsById = new Map((data ?? []).map((row) => {
+      const asset = toProjectGlobalAsset(row as DatabaseRow);
+      return [asset.id, asset] as const;
+    }));
+    return assetIds.flatMap((id) => assetsById.get(id) ?? []);
+  }
   async listSections(id: string) { return this.list('project_sections', 'project_id', id, toSection, ['position', 'id']); }
   async listTasks(id: string, limit?: number) { return this.list('project_tasks', 'project_id', id, toTask, limit === undefined ? ['position', 'id'] : ['updated_at', 'id'], limit, limit === undefined); }
   async listWorkSessionEntries(id: string) { return this.list('project_work_session_entries', 'session_id', id, toWorkSessionEntry, ['position', 'occurred_at', 'id']); }
@@ -488,6 +594,14 @@ export class SupabaseProjectRepository implements ProjectRepository {
     const session = await this.getWorkSession(value.sessionId);
     if (!session) throw new Error('The work session for this entry was not found.');
     await this.upsert('project_work_session_entries', workSessionEntryRow(value, session.projectId));
+  }
+
+  async touchProjectActivity(projectId: string, occurredAt: string) {
+    const { error } = await this.getClient().rpc('touch_project_activity', {
+      p_occurred_at: occurredAt,
+      p_project_id: projectId,
+    });
+    if (error) throw error;
   }
 
   async saveAtomically(changes: ProjectRepositoryChanges) {

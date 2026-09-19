@@ -8,6 +8,7 @@ import type {
 import { getSupabaseClient } from '../auth/supabase-client';
 import {
   createConversationProjectChangesPayload,
+  SupabaseProjectRepository,
 } from '../projects/supabase-project-repository';
 
 import {
@@ -121,7 +122,15 @@ implements ConversationProjectProcessingRepository {
     });
     if (error?.code === '40001') throw new StaleProjectStateError(error.message);
     if (error) throw error;
-    return data === 'skipped' ? 'skipped' : 'processed';
+    if (data === 'skipped') return 'skipped';
+    const session = input.changes.workSessions?.find(
+      (value) => value.projectId === input.projectId,
+    );
+    if (session) {
+      await new SupabaseProjectRepository(this.getClient)
+        .touchProjectActivity(input.projectId, session.updatedAt);
+    }
+    return 'processed';
   }
 
   async fail(conversationId: string, projectId: string | null, errorMessage: string) {

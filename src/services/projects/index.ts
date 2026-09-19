@@ -1,6 +1,7 @@
 export * from './in-memory-project-repository';
 export * from './project-chat-service';
 export * from './project-asset-picker';
+export * from './project-asset-placement-verification';
 export * from './project-asset-service';
 export * from './project-client';
 export * from './project-repository';

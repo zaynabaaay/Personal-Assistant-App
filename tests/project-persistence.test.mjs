@@ -187,6 +187,45 @@ test('repository reads are isolated to the authenticated owner', async () => {
   assert.deepEqual(await repository(database, OWNER_B).listSections(PROJECT_ID), []);
 });
 
+test('Supabase placement and Project-global asset reads are owner and Project scoped', async () => {
+  const database = new FakeSupabaseDatabase();
+  const resourceTable = database.table('project_resources');
+  const placementTable = database.table('project_asset_section_placements');
+  const uploadedRow = (ownerId, id, projectId, createdAt, status = 'current') => ({
+    byte_size: 4, created_at: createdAt, id, mime_type: 'image/png', name: `${id}.png`,
+    original_filename: `${id}.png`, owner_id: ownerId, project_id: projectId,
+    resource_kind: 'uploaded_asset', role: 'reference', section_id: 'section-1',
+    source_metadata: { kind: 'original-upload' }, status,
+    storage_path: `${ownerId}/${projectId}/${id}/private-object`, type: 'image',
+    updated_at: createdAt,
+  });
+  resourceTable.set(`${OWNER_A}:asset-b`, uploadedRow(OWNER_A, 'asset-b', PROJECT_ID, OPERATION_AT, 'archived'));
+  resourceTable.set(`${OWNER_A}:asset-a`, uploadedRow(OWNER_A, 'asset-a', PROJECT_ID, CREATED_AT));
+  resourceTable.set(`${OWNER_A}:legacy`, {
+    created_at: CREATED_AT, id: 'legacy', name: 'Legacy', owner_id: OWNER_A,
+    project_id: PROJECT_ID, resource_kind: 'legacy', role: 'reference', type: 'link',
+    updated_at: CREATED_AT,
+  });
+  resourceTable.set(`${OWNER_A}:other-project`, uploadedRow(OWNER_A, 'other-project', 'project-2', CREATED_AT));
+  resourceTable.set(`${OWNER_B}:other-owner`, uploadedRow(OWNER_B, 'other-owner', PROJECT_ID, CREATED_AT));
+  for (const row of [
+    { asset_id: 'asset-b', created_at: OPERATION_AT, owner_id: OWNER_A, project_id: PROJECT_ID, section_id: 'section-1' },
+    { asset_id: 'asset-a', created_at: CREATED_AT, owner_id: OWNER_A, project_id: PROJECT_ID, section_id: 'section-1' },
+    { asset_id: 'other-project', created_at: CREATED_AT, owner_id: OWNER_A, project_id: 'project-2', section_id: 'other-section' },
+    { asset_id: 'other-owner', created_at: CREATED_AT, owner_id: OWNER_B, project_id: PROJECT_ID, section_id: 'section-1' },
+  ]) placementTable.set(`${row.owner_id}:${row.project_id}:${row.asset_id}`, row);
+
+  const owner = repository(database, OWNER_A);
+  assert.deepEqual((await owner.listProjectAssets(PROJECT_ID)).map(({ id, status }) => [id, status]), [
+    ['asset-a', 'current'], ['asset-b', 'archived'],
+  ]);
+  assert.equal('storagePath' in (await owner.listProjectAssets(PROJECT_ID))[0], false);
+  assert.deepEqual((await owner.listAssetPlacements(PROJECT_ID, 'asset-a')).map(({ sectionId }) => sectionId), ['section-1']);
+  assert.deepEqual((await owner.listSectionAssetPlacements(PROJECT_ID, 'section-1')).map(({ assetId }) => assetId), ['asset-a', 'asset-b']);
+  assert.deepEqual(await repository(database, OWNER_B).listProjectAssets('project-2'), []);
+  assert.deepEqual(await repository(database, OWNER_B).listSectionAssetPlacements('project-2', 'other-section'), []);
+});
+
 test('new Project and Overview use one atomic repository commit', async () => {
   const database = new FakeSupabaseDatabase();
   const projects = repository(database);

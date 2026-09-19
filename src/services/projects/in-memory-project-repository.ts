@@ -2,10 +2,12 @@ import { orderWorkSessionEntries } from '@/domain/projects';
 import type {
   Project,
   ProjectAsset,
+  ProjectAssetSectionPlacement,
   ProjectChangeEvent,
   ProjectDecision,
   ProjectDeliverable,
   ProjectKnowledgeItem,
+  ProjectGlobalAsset,
   ProjectMilestone,
   ProjectResource,
   ProjectSection,
@@ -30,6 +32,7 @@ type InMemoryUploadAttempt = BeginProjectAssetUploadInput & {
 };
 
 export type InMemoryProjectRepositorySeed = {
+  assetPlacements?: (ProjectAssetSectionPlacement & { projectId: string })[];
   changeEvents?: ProjectChangeEvent[];
   decisions?: ProjectDecision[];
   deliverables?: ProjectDeliverable[];
@@ -62,6 +65,7 @@ function listForProject<T extends { projectId: string }>(
 }
 
 export class InMemoryProjectRepository implements ProjectRepository {
+  private readonly assetPlacements: (ProjectAssetSectionPlacement & { projectId: string })[];
   private readonly changeEvents: Map<string, ProjectChangeEvent>;
   private readonly decisions: Map<string, ProjectDecision>;
   private readonly deliverables: Map<string, ProjectDeliverable>;
@@ -77,6 +81,14 @@ export class InMemoryProjectRepository implements ProjectRepository {
   private readonly ownerId: string;
 
   constructor(seed: InMemoryProjectRepositorySeed = {}) {
+    this.assetPlacements = clone(seed.assetPlacements ?? (seed.resources ?? [])
+      .filter((resource) => resource.resourceKind === 'uploaded_asset' && resource.sectionId)
+      .map((resource) => ({
+        assetId: resource.id,
+        createdAt: resource.createdAt,
+        projectId: resource.projectId,
+        sectionId: resource.sectionId!,
+      })));
     this.changeEvents = createMap(seed.changeEvents);
     this.decisions = createMap(seed.decisions);
     this.deliverables = createMap(seed.deliverables);
@@ -93,6 +105,18 @@ export class InMemoryProjectRepository implements ProjectRepository {
 
   async addChangeEvent(event: ProjectChangeEvent) {
     this.changeEvents.set(event.id, clone(event));
+  }
+
+  async addAssetPlacement(projectId: string, assetId: string, sectionId: string) {
+    const asset = this.requirePlacementAsset(projectId, assetId);
+    this.requirePlacementSection(projectId, sectionId);
+    const exists = this.assetPlacements.some((placement) => placement.projectId === projectId &&
+      placement.assetId === assetId && placement.sectionId === sectionId);
+    if (!exists) {
+      this.assetPlacements.push({ assetId, createdAt: new Date().toISOString(), projectId, sectionId });
+      await this.touchPlacementActivity(projectId);
+    }
+    return clone(asset);
   }
 
   async beginAssetUpload(input: BeginProjectAssetUploadInput): Promise<ProjectAssetUploadReservation> {
@@ -143,6 +167,7 @@ export class InMemoryProjectRepository implements ProjectRepository {
       ...(attempt.width ? { width: attempt.width } : {}),
     };
     this.resources.set(asset.id, clone(asset));
+    this.syncAssetPlacement(asset);
     attempt.finalized = true;
     return clone(asset);
   }
@@ -164,6 +189,59 @@ export class InMemoryProjectRepository implements ProjectRepository {
         await this.finalizeAssetUpload(attempt.attemptId);
       }
     }
+  }
+
+  async removeAssetPlacement(projectId: string, assetId: string, sectionId: string) {
+    let asset = this.requirePlacementAsset(projectId, assetId);
+    const placements = this.assetPlacements.filter((placement) =>
+      placement.projectId === projectId && placement.assetId === assetId);
+    const removed = placements.find((placement) => placement.sectionId === sectionId);
+    if (!removed) return clone(asset);
+    if (placements.length === 1) {
+      throw new Error('This material must remain in at least one section for now.');
+    }
+    if (asset.sectionId === sectionId) {
+      const fallback = placements.filter((placement) => placement.sectionId !== sectionId)
+        .filter((placement) => this.sections.get(placement.sectionId)?.status === 'active')
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) ||
+          left.sectionId.localeCompare(right.sectionId))[0];
+      if (!fallback) {
+        throw new Error('This material must remain in at least one active section for now.');
+      }
+      const updated = { ...asset, sectionId: fallback.sectionId, updatedAt: new Date().toISOString() };
+      this.resources.set(assetId, clone(updated));
+      this.syncAssetPlacement(updated, sectionId);
+      asset = updated;
+    } else {
+      this.deleteAssetPlacement(projectId, assetId, sectionId);
+      await this.touchPlacementActivity(projectId);
+    }
+    return clone(asset);
+  }
+
+  async replaceAssetPlacement(projectId: string, assetId: string, sourceSectionId: string,
+    targetSectionId: string) {
+    let asset = this.requirePlacementAsset(projectId, assetId);
+    this.requirePlacementSection(projectId, targetSectionId);
+    if (!this.assetPlacements.some((placement) => placement.projectId === projectId &&
+      placement.assetId === assetId && placement.sectionId === sourceSectionId)) {
+      throw new Error('The source section does not contain this material.');
+    }
+    if (sourceSectionId === targetSectionId) return clone(asset);
+    if (asset.sectionId === sourceSectionId) {
+      const updated = { ...asset, sectionId: targetSectionId, updatedAt: new Date().toISOString() };
+      this.resources.set(assetId, clone(updated));
+      this.syncAssetPlacement(updated, sourceSectionId);
+      asset = updated;
+    } else {
+      const targetExists = this.assetPlacements.some((placement) => placement.projectId === projectId &&
+        placement.assetId === assetId && placement.sectionId === targetSectionId);
+      if (!targetExists) this.assetPlacements.push({ assetId, createdAt: new Date().toISOString(),
+        projectId, sectionId: targetSectionId });
+      this.deleteAssetPlacement(projectId, assetId, sourceSectionId);
+      await this.touchPlacementActivity(projectId);
+    }
+    return clone(asset);
   }
 
   /** Test/storage adapter hook: the real repository derives this from storage.objects. */
@@ -217,6 +295,15 @@ export class InMemoryProjectRepository implements ProjectRepository {
     );
   }
 
+  async listAssetPlacements(projectId: string, assetId: string) {
+    return this.assetPlacements
+      .filter((placement) => placement.projectId === projectId && placement.assetId === assetId)
+      .sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.sectionId.localeCompare(right.sectionId))
+      .map(({ projectId: _projectId, ...placement }) => clone(placement));
+  }
+
   async listDecisions(projectId: string) {
     return listForProject(this.decisions.values(), projectId);
   }
@@ -241,8 +328,36 @@ export class InMemoryProjectRepository implements ProjectRepository {
     return [...this.projects.values()].map(clone);
   }
 
+  async listProjectAssets(projectId: string): Promise<ProjectGlobalAsset[]> {
+    return listForProject(this.resources.values(), projectId)
+      .filter((resource) => resource.resourceKind === 'uploaded_asset')
+      .map(({ externalUrl: _externalUrl, sectionId: _sectionId, storagePath: _storagePath,
+        ...resource }) => resource as ProjectGlobalAsset)
+      .sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  }
+
   async listResources(projectId: string) {
     return listForProject(this.resources.values(), projectId);
+  }
+
+  async listSectionAssetPlacements(projectId: string, sectionId: string) {
+    return this.assetPlacements
+      .filter((placement) => placement.projectId === projectId && placement.sectionId === sectionId)
+      .sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt) || left.assetId.localeCompare(right.assetId))
+      .map(({ projectId: _projectId, ...placement }) => clone(placement));
+  }
+
+  async listSectionAssets(projectId: string, sectionId: string): Promise<ProjectGlobalAsset[]> {
+    const ids = (await this.listSectionAssetPlacements(projectId, sectionId)).map(({ assetId }) => assetId);
+    return ids.flatMap((id) => {
+      const resource = this.resources.get(id);
+      if (!resource || resource.projectId !== projectId || resource.resourceKind !== 'uploaded_asset') return [];
+      const { externalUrl: _externalUrl, sectionId: _sectionId, storagePath: _storagePath,
+        ...safe } = clone(resource);
+      return [safe as ProjectGlobalAsset];
+    });
   }
 
   async listSections(projectId: string) {
@@ -293,7 +408,9 @@ export class InMemoryProjectRepository implements ProjectRepository {
   }
 
   async saveResource(resource: ProjectResource) {
+    const previous = this.resources.get(resource.id);
     this.resources.set(resource.id, clone(resource));
+    if (resource.resourceKind === 'uploaded_asset') this.syncAssetPlacement(resource, previous?.sectionId);
   }
 
   async saveSection(section: ProjectSection) {
@@ -312,6 +429,14 @@ export class InMemoryProjectRepository implements ProjectRepository {
     this.workSessionEntries.set(entry.id, clone(entry));
   }
 
+  async touchProjectActivity(projectId: string, occurredAt: string) {
+    const project = this.projects.get(projectId);
+    if (!project) throw new Error('Project was not found.');
+    if (occurredAt > project.updatedAt) {
+      this.projects.set(projectId, clone({ ...project, updatedAt: occurredAt }));
+    }
+  }
+
   async saveAtomically(changes: ProjectRepositoryChanges) {
     const apply = <T extends { id: string }>(
       target: Map<string, T>,
@@ -325,7 +450,11 @@ export class InMemoryProjectRepository implements ProjectRepository {
     apply(this.tasks, changes.tasks);
     apply(this.knowledgeItems, changes.knowledgeItems);
     apply(this.decisions, changes.decisions);
-    apply(this.resources, changes.resources);
+    changes.resources?.forEach((resource) => {
+      const previous = this.resources.get(resource.id);
+      this.resources.set(resource.id, clone(resource));
+      if (resource.resourceKind === 'uploaded_asset') this.syncAssetPlacement(resource, previous?.sectionId);
+    });
     apply(this.sections, changes.sections);
     apply(this.workSessionEntries, changes.workSessionEntries);
     apply(this.changeEvents, changes.changeEvents);
@@ -361,5 +490,47 @@ export class InMemoryProjectRepository implements ProjectRepository {
       objectExists: attempt.objectExists, objectId: attempt.objectId,
       projectId: attempt.projectId, sectionId: attempt.sectionId,
       status: attempt.finalized ? 'finalized' : 'pending', storagePath: attempt.storagePath };
+  }
+
+  private syncAssetPlacement(resource: ProjectResource, previousSectionId?: string) {
+    if (!resource.sectionId) {
+      throw new Error('Uploaded Project assets require an authoritative section relationship.');
+    }
+    if (previousSectionId && previousSectionId !== resource.sectionId) {
+      this.deleteAssetPlacement(resource.projectId, resource.id, previousSectionId);
+    }
+    const exists = this.assetPlacements.some((placement) =>
+      placement.projectId === resource.projectId && placement.assetId === resource.id &&
+      placement.sectionId === resource.sectionId);
+    if (!exists) this.assetPlacements.push({ assetId: resource.id, createdAt: resource.updatedAt,
+      projectId: resource.projectId, sectionId: resource.sectionId });
+    if (previousSectionId && previousSectionId !== resource.sectionId) {
+      void this.touchPlacementActivity(resource.projectId);
+    }
+  }
+
+  private deleteAssetPlacement(projectId: string, assetId: string, sectionId: string) {
+    const index = this.assetPlacements.findIndex((placement) => placement.projectId === projectId &&
+      placement.assetId === assetId && placement.sectionId === sectionId);
+    if (index >= 0) this.assetPlacements.splice(index, 1);
+  }
+
+  private requirePlacementAsset(projectId: string, assetId: string) {
+    const resource = this.resources.get(assetId);
+    if (!resource || resource.projectId !== projectId || resource.resourceKind !== 'uploaded_asset') {
+      throw new Error('Project asset was not found in this Project.');
+    }
+    return resource as ProjectAsset;
+  }
+
+  private requirePlacementSection(projectId: string, sectionId: string) {
+    const section = this.sections.get(sectionId);
+    if (!section || section.projectId !== projectId || section.status !== 'active') {
+      throw new Error('The selected section is not active in this Project.');
+    }
+  }
+
+  private async touchPlacementActivity(projectId: string) {
+    try { await this.touchProjectActivity(projectId, new Date().toISOString()); } catch { /* secondary */ }
   }
 }

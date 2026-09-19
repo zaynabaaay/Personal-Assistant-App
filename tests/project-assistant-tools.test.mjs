@@ -42,6 +42,9 @@ function project(overrides = {}) {
 
 function seed() {
   return {
+    assetPlacements: [
+      { assetId: 'asset-1', createdAt: CREATED_AT, projectId: PROJECT_ID, sectionId: 'materials' },
+    ],
     changeEvents: [{
       entityId: 'task-complete', entityType: 'task', eventType: 'task_completed',
       id: 'change-1', occurredAt: UPDATED_AT, projectId: PROJECT_ID,
@@ -80,7 +83,7 @@ function seed() {
       role: 'reference', type: 'link', updatedAt: UPDATED_AT },
     { byteSize: 4, createdAt: CREATED_AT, id: 'asset-1', mimeType: 'image/png',
       name: 'Linen swatch', originalFilename: 'linen.png', projectId: PROJECT_ID,
-      role: 'reference', sectionId: 'materials', status: 'current',
+      resourceKind: 'uploaded_asset', role: 'reference', sectionId: 'materials', status: 'current',
       storagePath: `${USER_ID}/${PROJECT_ID}/asset-1/object-1`, type: 'image',
       updatedAt: UPDATED_AT }],
     sections: [{ createdAt: CREATED_AT, id: 'materials', isDefault: false, position: 1,
@@ -158,7 +161,8 @@ test('comprehensive Project context returns current facts without raw transcript
   assert.deepEqual(output.result.resources[1], {
     byteSize: 4, createdAt: CREATED_AT, id: 'asset-1', mimeType: 'image/png',
     name: 'Linen swatch', originalFilename: 'linen.png', role: 'reference',
-    sectionId: 'materials', sectionTitle: 'Materials', status: 'current', type: 'image',
+    placements: [{ sectionId: 'materials', sectionTitle: 'Materials' }],
+    placementsTruncated: false, status: 'current', type: 'image',
   });
   assert.equal(output.result.recentChanges[0].eventType, 'task_completed');
   assert.equal(rawEntryReads, 0);
@@ -281,6 +285,8 @@ test('suggestive uploaded filename remains metadata, not evidence of document co
     type: 'pdf',
     updatedAt: UPDATED_AT,
   }];
+  assetSeed.assetPlacements = [{ assetId: 'asset-manufacturer-contract', createdAt: CREATED_AT,
+    projectId: PROJECT_ID, sectionId: 'materials' }];
   const requests = [];
   const executeReadTool = executorFor({ [USER_ID]: assetSeed });
   const safeAnswer = 'A PDF named final-manufacturer-pricing-and-contract.pdf exists in the Materials section, but its contents have not been made available for me to read or analyze, so I cannot tell what price the manufacturer quoted.';
@@ -305,11 +311,14 @@ test('suggestive uploaded filename remains metadata, not evidence of document co
         'final-manufacturer-pricing-and-contract.pdf');
       assert.equal(toolResult.resources[0].mimeType, 'application/pdf');
       assert.equal(toolResult.resources[0].byteSize, 842_731);
-      assert.equal(toolResult.resources[0].sectionTitle, 'Materials');
+      assert.deepEqual(toolResult.resources[0].placements,
+        [{ sectionId: 'materials', sectionTitle: 'Materials' }]);
       assert.equal('content' in toolResult.resources[0], false);
       assert.equal('summary' in toolResult.resources[0], false);
       assert.equal('sourceMetadata' in toolResult.resources[0], false);
       assert.match(request.instructions, /not evidence of the file contents/i);
+      assert.match(request.instructions, /placements list is the actual section membership/i);
+      assert.match(request.instructions, /Never treat a singular compatibility section as complete membership/i);
       return openAIResponse([{ content: [{ text: safeAnswer, type: 'output_text' }],
         type: 'message' }]);
     },
@@ -326,6 +335,63 @@ test('suggestive uploaded filename remains metadata, not evidence of document co
   assert.equal(requests.length, 2);
   assert.equal(requests[1].input.at(-2).name, 'get_project_context');
   assert.equal(requests[1].input.at(-1).type, 'function_call_output');
+});
+
+test('multi-placed asset enters Tina context once with bounded truthful membership', async () => {
+  const projectSeed = seed();
+  projectSeed.sections.push({ createdAt: CREATED_AT, id: 'references', isDefault: false,
+    position: 2, projectId: PROJECT_ID, status: 'active', title: 'References',
+    updatedAt: UPDATED_AT });
+  projectSeed.assetPlacements = [
+    { assetId: 'asset-1', createdAt: UPDATED_AT, projectId: PROJECT_ID, sectionId: 'materials' },
+    { assetId: 'asset-1', createdAt: CREATED_AT, projectId: PROJECT_ID, sectionId: 'references' },
+  ];
+  const execute = executorFor({ [USER_ID]: projectSeed });
+  const output = await execute(
+    call('get_project_context', { focus: 'knowledge', projectId: PROJECT_ID }),
+    { accessToken: ACCESS_TOKEN, userId: USER_ID },
+  );
+
+  const assets = output.result.resources.filter((resource) => resource.id === 'asset-1');
+  assert.equal(assets.length, 1);
+  assert.deepEqual(assets[0].placements, [
+    { sectionId: 'references', sectionTitle: 'References' },
+    { sectionId: 'materials', sectionTitle: 'Materials' },
+  ]);
+  assert.equal(assets[0].placementsTruncated, false);
+  assert.equal('sectionId' in assets[0], false);
+  assert.equal('sectionTitle' in assets[0], false);
+  assert.equal('storagePath' in assets[0], false);
+  assert.equal('content' in assets[0], false);
+});
+
+test('Tina asset placements use deterministic ordering and an explicit ten-section bound', async () => {
+  const projectSeed = seed();
+  const placementSections = Array.from({ length: 12 }, (_, index) => ({
+    createdAt: CREATED_AT,
+    id: `section-${String(index).padStart(2, '0')}`,
+    isDefault: false,
+    position: index + 2,
+    projectId: PROJECT_ID,
+    status: 'active',
+    title: `Section ${index}`,
+    updatedAt: UPDATED_AT,
+  }));
+  projectSeed.sections.push(...placementSections);
+  projectSeed.assetPlacements = placementSections.map((section) => ({
+    assetId: 'asset-1', createdAt: CREATED_AT, projectId: PROJECT_ID, sectionId: section.id,
+  })).reverse();
+  const execute = executorFor({ [USER_ID]: projectSeed });
+  const output = await execute(
+    call('get_project_context', { focus: 'knowledge', projectId: PROJECT_ID }),
+    { accessToken: ACCESS_TOKEN, userId: USER_ID },
+  );
+  const asset = output.result.resources.find((resource) => resource.id === 'asset-1');
+
+  assert.equal(asset.placements.length, 10);
+  assert.deepEqual(asset.placements.map(({ sectionId }) => sectionId),
+    placementSections.slice(0, 10).map(({ id }) => id));
+  assert.equal(asset.placementsTruncated, true);
 });
 
 test('a descriptive clothing-brand reference resolves one clear Project before answering', async () => {

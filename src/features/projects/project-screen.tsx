@@ -29,7 +29,6 @@ import { useVisibleViewport } from '@/features/home/use-visible-viewport';
 import { assistantService } from '@/services/assistant/assistant-service';
 import { projectChatService, projectRepository, projectService } from '@/services/projects/project-client';
 
-import { projectFallbackInitial } from './project-presentation';
 import { ProjectSectionAssets } from './project-section-assets';
 import { ProjectSectionNavigation } from './project-section-navigation';
 import { ProjectSectionsManager } from './project-sections-manager';
@@ -75,9 +74,10 @@ function Transcript({ entries, responding }: { entries: ProjectWorkSessionEntry[
   );
 }
 
-function ProjectActions({ onClose, onManageSections, onUpdated, project, visible }: {
+function ProjectActions({ onClose, onManageSections, onOpenOverviewFiles, onUpdated, project, visible }: {
   onClose: () => void;
   onManageSections: () => void;
+  onOpenOverviewFiles: () => void;
   onUpdated: (project: Project) => void;
   project: Project;
   visible: boolean;
@@ -111,6 +111,7 @@ function ProjectActions({ onClose, onManageSections, onUpdated, project, visible
           </> : <>
             <Pressable onPress={() => setEditing(true)} style={styles.actionRow}><Text style={styles.actionText}>Edit Project</Text></Pressable>
             <Pressable onPress={() => { onClose(); onManageSections(); }} style={styles.actionRow} testID="manage-project-sections"><Text style={styles.actionText}>Manage sections</Text></Pressable>
+            <Pressable onPress={() => { onClose(); onOpenOverviewFiles(); }} style={styles.actionRow} testID="open-project-overview-files"><Text style={styles.actionText}>Overview files</Text></Pressable>
             {project.status === 'active' ? <Pressable onPress={() => void update({ status: 'paused' })} style={styles.actionRow}><Text style={styles.actionText}>Pause</Text></Pressable> : null}
             {project.status === 'paused' ? <Pressable onPress={() => void update({ status: 'active' })} style={styles.actionRow}><Text style={styles.actionText}>Resume</Text></Pressable> : null}
             {project.status !== 'archived' ? <Pressable onPress={archive} style={styles.actionRow}><Text style={styles.destructiveText}>Archive</Text></Pressable> : null}
@@ -118,6 +119,31 @@ function ProjectActions({ onClose, onManageSections, onUpdated, project, visible
           <Pressable onPress={onClose} style={[styles.actionRow, styles.cancelRow]}><Text style={styles.cancelText}>Cancel</Text></Pressable>
         </Pressable>
       </Pressable>
+    </Modal>
+  );
+}
+
+function OverviewFiles({ onClose, onError, projectId, section, sections }: {
+  onClose: () => void;
+  onError: (message: string | null) => void;
+  projectId: string;
+  section: ProjectSection;
+  sections: readonly ProjectSection[];
+}) {
+  return (
+    <Modal animationType="slide" onRequestClose={onClose} visible>
+      <SafeAreaView style={styles.filesAccess} testID="project-overview-files-access">
+        <View style={styles.filesAccessHeader}>
+          <View>
+            <Text style={styles.filesAccessTitle}>Overview files</Text>
+            <Text style={styles.filesAccessNote}>Files already saved to this section</Text>
+          </View>
+          <Pressable accessibilityLabel="Close Overview files" onPress={onClose} style={styles.filesAccessClose}><Text style={styles.filesAccessCloseText}>Done</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.filesAccessContent} showsVerticalScrollIndicator={false}>
+          <ProjectSectionAssets onError={onError} projectId={projectId} section={section} sections={sections} />
+        </ScrollView>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -141,6 +167,7 @@ export default function ProjectScreen() {
   const [error, setError] = useState<string | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [sectionsOpen, setSectionsOpen] = useState(false);
+  const [overviewFilesOpen, setOverviewFilesOpen] = useState(false);
   const [tinaOpen, setTinaOpen] = useState(false);
   const requestId = useRef(0);
   const canSend = messageSendEnabled(draft, { isFinishing: startingNewChat, isResponding: responding, isRestoring: restoring, isSavingMessage: saving });
@@ -243,6 +270,8 @@ export default function ProjectScreen() {
   const selectedSection = activeSections.find(
     (section) => section.id === selectedSectionId,
   ) ?? activeSections.find((section) => section.isDefault) ?? null;
+  const overviewSection = activeSections.find((section) => section.isDefault);
+  const overviewAnchor = project?.goal?.trim();
 
   const sectionsChanged = (nextSections: ProjectSection[]) => {
     setSections(nextSections);
@@ -270,25 +299,30 @@ export default function ProjectScreen() {
             {restoring ? <Text style={styles.notice}>Opening Project…</Text> : project ? <>
               <View style={styles.identity} testID="project-identity">
                 <View style={styles.coverFallback} testID="project-home-cover-fallback">
-                  <View style={styles.coverGlow} />
-                  <Text style={styles.coverInitial}>{projectFallbackInitial(project)}</Text>
+                  <View style={styles.coverPlane} />
+                  <View style={styles.coverRulePrimary} />
+                  <View style={styles.coverRuleSecondary} />
                 </View>
                 <View style={styles.identityCopy}>
                   <Text style={styles.projectName}>{project.name}</Text>
-                  <Text numberOfLines={2} style={styles.projectDescription}>{project.description ?? 'No description yet.'}</Text>
+                  {project.description ? <Text numberOfLines={3} style={styles.projectDescription}>{project.description}</Text> : null}
                 </View>
               </View>
 
               <ProjectSectionNavigation onSelect={(section) => setSelectedSectionId(section.id)} sections={activeSections} selectedId={selectedSection?.id ?? ''} />
               {selectedSection?.isDefault ? (
-                <>
-                  <View style={styles.overview} testID="project-overview-section">
-                    <Text style={styles.overviewLabel}>About this Project</Text>
-                    <Text style={styles.overviewText}>{project.description ?? 'Add a short description to give this Project its purpose.'}</Text>
-                    {project.goal ? <View style={styles.purpose}><Text style={styles.purposeLabel}>Purpose</Text><Text style={styles.purposeText}>{project.goal}</Text></View> : null}
+                <View accessibilityLabel="Project Overview" style={styles.overview} testID="project-overview-section">
+                  <View style={styles.overviewContent}>
+                    {overviewAnchor ? (
+                      <>
+                        <Text style={styles.overviewLabel}>Current focus</Text>
+                        <Text style={styles.overviewText}>{overviewAnchor}</Text>
+                      </>
+                    ) : (
+                      <Text style={styles.overviewEmpty}>This space is intentionally open.</Text>
+                    )}
                   </View>
-                  <ProjectSectionAssets key={selectedSection.id} onError={setError} projectId={project.id} section={selectedSection} sections={activeSections} />
-                </>
+                </View>
               ) : selectedSection ? (
                 <View accessibilityLabel={`${selectedSection.title} section`} style={styles.customSectionSurface} testID="project-custom-section-surface">
                   <ProjectSectionAssets key={selectedSection.id} onError={setError} projectId={project.id} section={selectedSection} sections={activeSections} />
@@ -314,15 +348,15 @@ export default function ProjectScreen() {
             </> : (
               <Pressable accessibilityRole="button" onPress={() => setTinaOpen(true)} style={({ pressed }) => [styles.askTina, pressed && styles.pressed]} testID="open-project-tina">
                 <View style={styles.tinaMark}><Text style={styles.tinaMarkText}>✦</Text></View>
-                <View style={styles.askCopy}><Text style={styles.askTitle}>Ask Tina</Text><Text style={styles.askScope}>This Project is already in context</Text></View>
-                <Text style={styles.askArrow}>↑</Text>
+                <View style={styles.askCopy}><Text style={styles.askTitle}>Ask Tina</Text></View>
               </Pressable>
             )}
           </View>
         </View>
         {project ? <>
-          <ProjectActions key={`${project.id}:${project.updatedAt}`} onClose={() => setActionsOpen(false)} onManageSections={() => setSectionsOpen(true)} onUpdated={setProject} project={project} visible={actionsOpen} />
+          <ProjectActions key={`${project.id}:${project.updatedAt}`} onClose={() => setActionsOpen(false)} onManageSections={() => setSectionsOpen(true)} onOpenOverviewFiles={() => setOverviewFilesOpen(true)} onUpdated={setProject} project={project} visible={actionsOpen} />
           <ProjectSectionsManager onChanged={sectionsChanged} onClose={() => setSectionsOpen(false)} projectId={project.id} sections={sections} visible={sectionsOpen} />
+          {overviewFilesOpen && overviewSection ? <OverviewFiles onClose={() => setOverviewFilesOpen(false)} onError={setError} projectId={project.id} section={overviewSection} sections={activeSections} /> : null}
         </> : null}
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -341,29 +375,27 @@ const styles = StyleSheet.create({
   back: { color: '#E5E5E7', fontSize: 35, fontWeight: '200', lineHeight: 37 },
   projectsLabel: { color: '#77777D', flex: 1, fontSize: 13, fontWeight: '500' },
   more: { color: '#C8C8CC', fontSize: 16, letterSpacing: 1 },
-  identity: { paddingBottom: 6 },
-  coverFallback: { alignItems: 'center', backgroundColor: '#111720', height: 150, justifyContent: 'center', overflow: 'hidden', position: 'relative' },
-  coverGlow: { backgroundColor: '#24324A', borderRadius: 160, height: 240, opacity: 0.46, position: 'absolute', right: -70, top: -120, width: 240 },
-  coverInitial: { color: '#B2C3DF', fontSize: 48, fontWeight: '200', opacity: 0.9 },
-  identityCopy: { paddingBottom: 22, paddingHorizontal: 20, paddingTop: 22 },
+  identity: { paddingBottom: 4 },
+  coverFallback: { backgroundColor: '#101011', borderColor: '#1B1B1D', borderRadius: 3, borderWidth: StyleSheet.hairlineWidth, height: 112, marginHorizontal: 20, overflow: 'hidden', position: 'relative' },
+  coverPlane: { backgroundColor: '#151516', bottom: -38, height: 94, left: '28%', position: 'absolute', right: -24, transform: [{ rotate: '-4deg' }] },
+  coverRulePrimary: { backgroundColor: '#2A2A2C', height: StyleSheet.hairlineWidth, left: 18, opacity: 0.72, position: 'absolute', right: 48, top: 34 },
+  coverRuleSecondary: { backgroundColor: '#202022', bottom: 25, height: StyleSheet.hairlineWidth, left: 48, opacity: 0.9, position: 'absolute', right: 18 },
+  identityCopy: { paddingBottom: 20, paddingHorizontal: 20, paddingTop: 20 },
   projectName: { color: '#F5F5F7', fontSize: 30, fontWeight: '600', letterSpacing: -0.8, lineHeight: 35 },
   projectDescription: { color: '#929298', fontSize: 15, lineHeight: 21, marginTop: 8, maxWidth: 560 },
-  overview: { borderTopColor: '#18181B', borderTopWidth: StyleSheet.hairlineWidth, marginHorizontal: 20, paddingBottom: 40, paddingTop: 28 },
-  overviewLabel: { color: '#74747A', fontSize: 12, fontWeight: '600', letterSpacing: 0.2, textTransform: 'uppercase' },
-  overviewText: { color: '#D5D5D8', fontSize: 16, lineHeight: 24, marginTop: 12, maxWidth: 620 },
+  overview: { alignItems: 'center', minHeight: 220, paddingBottom: 48, paddingHorizontal: 20, paddingTop: 28 },
+  overviewContent: { maxWidth: 640, width: '100%' },
+  overviewLabel: { color: '#6F6F75', fontSize: 11, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' },
+  overviewText: { color: '#C7C7CB', fontSize: 16, lineHeight: 24, marginTop: 10, maxWidth: 560 },
+  overviewEmpty: { color: '#68686E', fontSize: 14, lineHeight: 21, maxWidth: 360 },
   customSectionSurface: { minHeight: 300 },
-  purpose: { borderLeftColor: '#343B49', borderLeftWidth: 2, marginTop: 26, paddingLeft: 15 },
-  purposeLabel: { color: '#77777D', fontSize: 12, fontWeight: '600' },
-  purposeText: { color: '#BCBCC1', fontSize: 15, lineHeight: 22, marginTop: 6 },
-  tinaPanel: { backgroundColor: '#0C0C0E', borderColor: '#29292D', borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, bottom: 10, left: 12, overflow: 'hidden', position: 'absolute', right: 12 },
-  tinaPanelOpen: { borderBottomLeftRadius: 18, borderBottomRightRadius: 18, height: '62%' },
-  askTina: { alignItems: 'center', flexDirection: 'row', minHeight: 58, paddingHorizontal: 12 },
-  tinaMark: { alignItems: 'center', backgroundColor: '#182131', borderRadius: 15, height: 34, justifyContent: 'center', width: 34 },
+  tinaPanel: { backgroundColor: '#0C0C0E', borderColor: '#29292D', borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, bottom: 10, overflow: 'hidden', position: 'absolute', right: 12, width: 142 },
+  tinaPanelOpen: { borderBottomLeftRadius: 18, borderBottomRightRadius: 18, height: '62%', left: 12, width: undefined },
+  askTina: { alignItems: 'center', flexDirection: 'row', minHeight: 48, paddingHorizontal: 9 },
+  tinaMark: { alignItems: 'center', backgroundColor: '#182131', borderRadius: 14, height: 30, justifyContent: 'center', width: 30 },
   tinaMarkText: { color: '#9DB9E6', fontSize: 16 },
-  askCopy: { flex: 1, marginLeft: 11 },
+  askCopy: { marginLeft: 9 },
   askTitle: { color: '#EDEDEF', fontSize: 14, fontWeight: '600' },
-  askScope: { color: '#69696F', fontSize: 11, marginTop: 2 },
-  askArrow: { color: '#77777D', fontSize: 18, marginRight: 5 },
   tinaHeader: { alignItems: 'center', borderBottomColor: '#242427', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: 57, paddingHorizontal: 16 },
   tinaHeaderActions: { alignItems: 'center', flexDirection: 'row', gap: 4 },
   tinaTitle: { color: '#F1F1F3', fontSize: 15, fontWeight: '600' },
@@ -396,5 +428,12 @@ const styles = StyleSheet.create({
   destructiveText: { color: '#E5988E', fontSize: 16 },
   cancelRow: { borderBottomWidth: 0, marginTop: 7 },
   cancelText: { color: '#98989E', fontSize: 16, textAlign: 'center' },
+  filesAccess: { backgroundColor: '#080809', flex: 1 },
+  filesAccessHeader: { alignItems: 'center', borderBottomColor: '#202023', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: 68, paddingHorizontal: 20 },
+  filesAccessTitle: { color: '#F1F1F3', fontSize: 17, fontWeight: '600' },
+  filesAccessNote: { color: '#6E6E74', fontSize: 11, marginTop: 3 },
+  filesAccessClose: { alignItems: 'center', minHeight: 44, justifyContent: 'center', paddingLeft: 18 },
+  filesAccessCloseText: { color: '#A8B9D4', fontSize: 14, fontWeight: '600' },
+  filesAccessContent: { paddingTop: 8 },
   pressed: { opacity: 0.58 },
 });

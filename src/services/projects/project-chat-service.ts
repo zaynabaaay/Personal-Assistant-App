@@ -101,6 +101,7 @@ export class ProjectChatService {
     };
     if (!entry.content) throw new Error('A Project chat message cannot be empty.');
     await this.repository.saveWorkSessionEntry(entry);
+    await this.projectService.recordActivity(current.projectId, entry.occurredAt);
     return entry;
   }
 }

@@ -473,20 +473,19 @@ test('Open original stops after one retry, surfaces the second failure, and clea
   assert.deepEqual(value.busy, [true, false]);
 });
 
-test('signing rechecks the authoritative subtype and exact stored path', async () => {
+test('signing resolves immutable Storage identity from the authoritative asset instead of list input', async () => {
   let signs = 0;
   const value = setup({ storage: { createSignedUrl: async (path) => {
     signs += 1;
     return { expiresAt: Date.now() + 600_000, url: `signed://${path}` };
   } } });
   const asset = await value.service.upload('aqal', 'materials', selection());
-  await assert.rejects(value.service.signedUrl({ ...asset, storagePath: `${asset.storagePath}-forged` }), /no longer matches/);
-  assert.equal(signs, 0);
-  assert.match((await value.service.signedUrl(asset)).url, /^signed:\/\//);
+  assert.equal((await value.service.signedUrl({ id: asset.id, projectId: asset.projectId })).url,
+    `signed://${asset.storagePath}`);
   assert.equal(signs, 1);
   await value.repository.saveResource({ createdAt: AT, externalUrl: 'https://example.com',
     id: 'legacy', name: 'Legacy', projectId: 'aqal', role: 'reference', type: 'link', updatedAt: AT });
-  await assert.rejects(value.service.signedUrl({ id: 'legacy', projectId: 'aqal', storagePath: 'fake' }), /not found/);
+  await assert.rejects(value.service.signedUrl({ id: 'legacy', projectId: 'aqal' }), /not found/);
   assert.equal(signs, 1);
 });
 
@@ -517,6 +516,124 @@ test('same-Project reassignment, rename, archive, and restore only update metada
   assert.equal(restored.status, 'current');
   assert.equal((await service.list('aqal', 'overview')).length, 1);
   assert.equal(objects.get(asset.storagePath), originalObject);
+});
+
+test('multi-placement Add, Remove, and replacement preserve one stable asset and section reads follow placements', async () => {
+  const { objects, repository, service } = setup();
+  await repository.saveSection(section('references', 'aqal'));
+  const asset = await service.upload('aqal', 'materials', selection());
+  const originalObject = objects.get(asset.storagePath);
+  await service.addToSection('aqal', asset.id, 'overview');
+  await service.addToSection('aqal', asset.id, 'references');
+  await service.addToSection('aqal', asset.id, 'overview');
+  assert.deepEqual((await service.listPlacements('aqal', asset.id)).map(({ sectionId }) => sectionId),
+    ['materials', 'overview', 'references']);
+  const materialList = await service.list('aqal', 'materials');
+  assert.equal(materialList[0].id, asset.id);
+  assert.equal(materialList.some((item) => 'storagePath' in item || 'sectionId' in item), false);
+  assert.equal((await service.list('aqal', 'overview'))[0].id, asset.id);
+  assert.equal((await repository.listResources('aqal')).length, 1);
+
+  await service.removeFromSection('aqal', asset.id, 'overview');
+  assert.deepEqual((await service.listPlacements('aqal', asset.id)).map(({ sectionId }) => sectionId),
+    ['materials', 'references']);
+  const moved = await service.replacePlacement('aqal', asset.id, 'materials', 'overview');
+  assert.equal(moved.sectionId, 'overview');
+  assert.deepEqual((await service.listPlacements('aqal', asset.id)).map(({ sectionId }) => sectionId),
+    ['references', 'overview']);
+  assert.equal((await service.list('aqal', 'materials')).length, 0);
+  assert.equal((await service.list('aqal', 'references'))[0].id, asset.id);
+  assert.equal(objects.get(asset.storagePath), originalObject);
+});
+
+test('designated removal uses created-at then section ID fallback and final placement removal is atomic', async () => {
+  const { objects, repository, service } = setup();
+  const asset = await service.upload('aqal', 'materials', selection());
+  const stableObject = objects.get(asset.storagePath);
+  const seeded = new InMemoryProjectRepository({
+    assetPlacements: [
+      { assetId: asset.id, createdAt: '2026-08-26T18:00:00.000Z', projectId: 'aqal', sectionId: 'materials' },
+      { assetId: asset.id, createdAt: '2026-08-25T18:00:00.000Z', projectId: 'aqal', sectionId: 'z-section' },
+      { assetId: asset.id, createdAt: '2026-08-25T18:00:00.000Z', projectId: 'aqal', sectionId: 'a-section' },
+    ],
+    ownerId: OWNER,
+    projects: [project('aqal')],
+    resources: [asset],
+    sections: [section('materials', 'aqal'), section('z-section', 'aqal'), section('a-section', 'aqal')],
+  });
+  const deterministic = new ProjectAssetService(seeded, {
+    loadBinary: async () => new ArrayBuffer(0), storage: { createSignedUrl: async () => ({ expiresAt: 0, url: '' }),
+      remove: async () => undefined, upload: async () => undefined },
+  });
+  const updated = await deterministic.removeFromSection('aqal', asset.id, 'materials');
+  assert.equal(updated.sectionId, 'a-section');
+  await deterministic.removeFromSection('aqal', asset.id, 'z-section');
+  await assert.rejects(deterministic.removeFromSection('aqal', asset.id, 'a-section'),
+    /remain in at least one section/i);
+  assert.equal((await seeded.getResource(asset.id)).id, asset.id);
+  assert.equal(objects.get(asset.storagePath), stableObject);
+});
+
+test('placement mutation recency occurs once, failed operations do not touch, and touch failure is secondary', async () => {
+  const { repository, service } = setup();
+  const asset = await service.upload('aqal', 'materials', selection());
+  let touches = 0;
+  repository.touchProjectActivity = async () => { touches += 1; };
+  await service.addToSection('aqal', asset.id, 'overview');
+  await service.addToSection('aqal', asset.id, 'overview');
+  assert.equal(touches, 1);
+  await service.removeFromSection('aqal', asset.id, 'overview');
+  assert.equal(touches, 2);
+  await assert.rejects(service.removeFromSection('aqal', asset.id, 'materials'), /remain/);
+  assert.equal(touches, 2);
+  repository.touchProjectActivity = async () => { throw new Error('recency unavailable'); };
+  await service.addToSection('aqal', asset.id, 'overview');
+  assert.deepEqual((await service.listPlacements('aqal', asset.id)).map(({ sectionId }) => sectionId),
+    ['materials', 'overview']);
+});
+
+test('finalized upload retry does not touch recency and failed retry remains a no-op', async () => {
+  const { repository, service } = setup();
+  let touches = 0;
+  repository.touchProjectActivity = async () => { touches += 1; };
+  const identity = service.createUploadIdentity();
+  const first = await service.uploadWithIdentity('aqal', 'materials', selection(), identity);
+  assert.equal(touches, 1);
+
+  const retried = await service.uploadWithIdentity('aqal', 'materials', selection(), identity);
+  assert.equal(retried.id, first.id);
+  assert.equal(touches, 1);
+
+  const finalize = repository.finalizeAssetUpload.bind(repository);
+  repository.finalizeAssetUpload = async () => { throw new Error('retry unavailable'); };
+  await assert.rejects(
+    service.uploadWithIdentity('aqal', 'materials', selection(), identity),
+    /retry unavailable/,
+  );
+  assert.equal(touches, 1);
+  repository.finalizeAssetUpload = finalize;
+});
+
+test('designated removal skips archived fallback and rejects when no active survivor exists', async () => {
+  const { repository, service } = setup();
+  await repository.saveSection(section('archived-early', 'aqal'));
+  await repository.saveSection(section('active-later', 'aqal'));
+  const asset = await service.upload('aqal', 'materials', selection());
+  await service.addToSection('aqal', asset.id, 'archived-early');
+  await service.addToSection('aqal', asset.id, 'active-later');
+  await repository.saveSection({ ...(await repository.getSection('archived-early')),
+    status: 'archived' });
+
+  const moved = await service.removeFromSection('aqal', asset.id, 'materials');
+  assert.equal(moved.sectionId, 'active-later');
+
+  await repository.saveSection({ ...(await repository.getSection('active-later')),
+    status: 'archived' });
+  await assert.rejects(
+    service.removeFromSection('aqal', asset.id, 'active-later'),
+    /at least one active section/i,
+  );
+  assert.equal((await repository.getResource(asset.id)).sectionId, 'active-later');
 });
 
 test('section archive and restore preserve multiple attached asset identities', async () => {
@@ -553,7 +670,10 @@ test('asset UI stays section-scoped and preserves Project Tina and New Chat beha
   assert.match(surface, /projectAssetService\.uploadWithIdentity/);
   assert.match(surface, /project-image-asset/);
   assert.match(surface, /project-document-asset/);
-  assert.match(surface, /projectAssetService\.reassign/);
+  assert.match(surface, /projectAssetService\.addToSection/);
+  assert.match(surface, /projectAssetService\.removeFromSection/);
+  assert.match(surface, /projectAssetService\.replacePlacement/);
+  assert.match(surface, /Remove from this section/);
   assert.match(surface, /projectAssetService\.archive/);
   assert.match(surface, /projectAssetService\.restore/);
   assert.match(surface, /actionInFlight\.current/);
