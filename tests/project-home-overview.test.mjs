@@ -90,8 +90,10 @@ test('Overview files leave the page but retain upload and original access throug
 test('narrow iPhone layout keeps navigation scrollable and Ask Tina compact', async () => {
   const screen = await read('../src/features/projects/project-screen.tsx');
 
-  assert.match(screen, /tinaPanel: \{[^}]*right: 12[^}]*width: 142/);
-  assert.match(screen, /tinaPanelOpen: \{[^}]*left: 12[^}]*width: undefined/);
+  assert.match(screen, /tinaPanel: \{[^}]*right: 12/);
+  assert.match(screen, /tinaPanelClosed: \{ width: 142 \}/);
+  assert.match(screen, /tinaPanelOpen: \{[^}]*left: 12/);
+  assert.doesNotMatch(screen, /tinaPanelOpen: \{[^}]*width:/);
   assert.match(screen, /askTina: \{[^}]*minHeight: 48/);
   assert.doesNotMatch(screen, /This Project is already in context/);
 });

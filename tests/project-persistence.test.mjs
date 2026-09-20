@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { ProjectService } from '../src/services/projects/project-service.ts';
+import { ProjectAssetFinalPlacementError } from '../src/services/projects/project-repository.ts';
 import { SupabaseProjectRepository } from '../src/services/projects/supabase-project-repository.ts';
 
 const OWNER_A = '11111111-1111-1111-1111-111111111111';
@@ -224,6 +225,25 @@ test('Supabase placement and Project-global asset reads are owner and Project sc
   assert.deepEqual((await owner.listSectionAssetPlacements(PROJECT_ID, 'section-1')).map(({ assetId }) => assetId), ['asset-a', 'asset-b']);
   assert.deepEqual(await repository(database, OWNER_B).listProjectAssets('project-2'), []);
   assert.deepEqual(await repository(database, OWNER_B).listSectionAssetPlacements('project-2', 'other-section'), []);
+});
+
+test('Supabase removal maps only the final-placement constraint code to a typed condition', async () => {
+  const finalPlacement = new SupabaseProjectRepository(() => ({
+    rpc: async () => ({ data: null, error: { code: '23514', message: 'database detail' } }),
+  }));
+  await assert.rejects(
+    finalPlacement.removeAssetPlacement(PROJECT_ID, 'asset-a', 'section-1'),
+    ProjectAssetFinalPlacementError,
+  );
+
+  const unrelated = { code: '42501', message: 'database authorization detail' };
+  const unknownFailure = new SupabaseProjectRepository(() => ({
+    rpc: async () => ({ data: null, error: unrelated }),
+  }));
+  await assert.rejects(
+    unknownFailure.removeAssetPlacement(PROJECT_ID, 'asset-a', 'section-1'),
+    (error) => error === unrelated,
+  );
 });
 
 test('new Project and Overview use one atomic repository commit', async () => {

@@ -17,9 +17,14 @@ import {
   openProjectAssetOriginal,
   openProjectAssetSignedUrl,
   pickedProjectDocumentFromResult,
+  projectAssetMutationErrorMessage,
   runProjectAssetUploadFlow,
   runProjectDocumentPickerFlow,
 } from '../src/services/projects/project-asset-service.ts';
+import {
+  FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE,
+  ProjectAssetFinalPlacementError,
+} from '../src/services/projects/project-repository.ts';
 
 const AT = '2026-08-26T17:00:00.000Z';
 const OWNER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -568,10 +573,30 @@ test('designated removal uses created-at then section ID fallback and final plac
   const updated = await deterministic.removeFromSection('aqal', asset.id, 'materials');
   assert.equal(updated.sectionId, 'a-section');
   await deterministic.removeFromSection('aqal', asset.id, 'z-section');
-  await assert.rejects(deterministic.removeFromSection('aqal', asset.id, 'a-section'),
-    /remain in at least one section/i);
+  await assert.rejects(
+    deterministic.removeFromSection('aqal', asset.id, 'a-section'),
+    (error) => error instanceof ProjectAssetFinalPlacementError &&
+      error.message === FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE,
+  );
+  assert.deepEqual((await deterministic.listPlacements('aqal', asset.id))
+    .map(({ sectionId }) => sectionId), ['a-section']);
   assert.equal((await seeded.getResource(asset.id)).id, asset.id);
   assert.equal(objects.get(asset.storagePath), stableObject);
+});
+
+test('final-placement errors have specific safe UI copy while unrelated failures remain generic', () => {
+  assert.equal(
+    projectAssetMutationErrorMessage(new ProjectAssetFinalPlacementError()),
+    FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE,
+  );
+  assert.equal(
+    projectAssetMutationErrorMessage(new Error('database connection details')),
+    'The asset could not be updated.',
+  );
+  assert.equal(
+    projectAssetMutationErrorMessage({ code: 'unexpected', message: 'raw database failure' }),
+    'The asset could not be updated.',
+  );
 });
 
 test('placement mutation recency occurs once, failed operations do not touch, and touch failure is secondary', async () => {
@@ -683,6 +708,13 @@ test('asset UI stays section-scoped and preserves Project Tina and New Chat beha
   assert.match(surface, /onDismiss=\{addSheetDismissed\}/);
   assert.match(surface, /onBusyChange: setUploading/);
   assert.match(surface, /setActionError\(message\)/);
+  assert.match(surface, /projectAssetMutationErrorMessage\(cause\)/);
+  assert.match(surface, /testID="project-asset-rename-keyboard-layout"/);
+  assert.match(surface, /behavior=\{Platform\.OS === 'ios' \? 'padding'/);
+  assert.match(surface, /keyboardShouldPersistTaps="handled"/);
+  assert.match(surface, /!editing && \(asset\.type === 'image'/);
+  assert.match(surface, /testID="save-project-asset-name"/);
+  assert.match(surface, /testID="cancel-project-asset-rename"/);
   assert.match(surface, /finally \{ actionInFlight\.current = false; setBusy\(false\); \}/);
   assert.match(surface, /isProjectAssetSignedUrlFresh/);
   assert.match(surface, /WebBrowser\.openBrowserAsync/);

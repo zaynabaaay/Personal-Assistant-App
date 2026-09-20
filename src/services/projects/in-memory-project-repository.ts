@@ -22,6 +22,7 @@ import type {
   ProjectRepository,
   ProjectRepositoryChanges,
 } from './project-repository';
+import { ProjectAssetFinalPlacementError } from './project-repository';
 
 type InMemoryUploadAttempt = BeginProjectAssetUploadInput & {
   cleaned: boolean;
@@ -198,7 +199,7 @@ export class InMemoryProjectRepository implements ProjectRepository {
     const removed = placements.find((placement) => placement.sectionId === sectionId);
     if (!removed) return clone(asset);
     if (placements.length === 1) {
-      throw new Error('This material must remain in at least one section for now.');
+      throw new ProjectAssetFinalPlacementError();
     }
     if (asset.sectionId === sectionId) {
       const fallback = placements.filter((placement) => placement.sectionId !== sectionId)
@@ -206,7 +207,7 @@ export class InMemoryProjectRepository implements ProjectRepository {
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt) ||
           left.sectionId.localeCompare(right.sectionId))[0];
       if (!fallback) {
-        throw new Error('This material must remain in at least one active section for now.');
+        throw new ProjectAssetFinalPlacementError();
       }
       const updated = { ...asset, sectionId: fallback.sectionId, updatedAt: new Date().toISOString() };
       this.resources.set(assetId, clone(updated));

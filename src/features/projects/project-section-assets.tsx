@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
-import { Image, Linking, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import type { ProjectAsset, ProjectGlobalAsset, ProjectSection } from '@/domain/projects';
 import { pickProjectDocument, pickProjectImage } from '@/services/projects/project-asset-picker';
@@ -9,6 +22,7 @@ import {
   isProjectAssetSignedUrlFresh,
   openProjectAssetSignedUrl,
   openProjectAssetOriginal,
+  projectAssetMutationErrorMessage,
   runProjectDocumentPickerFlow,
   runProjectAssetUploadFlow,
 } from '@/services/projects/project-asset-service';
@@ -68,7 +82,7 @@ function AssetDetail({ asset, getSignedUrl, invalidateSignedUrl, onChanged, onCl
     onError(null);
     try { onChanged(await operation()); }
     catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'The asset could not be updated.';
+      const message = projectAssetMutationErrorMessage(cause);
       setActionError(message);
       onError(message);
     }
@@ -99,18 +113,33 @@ function AssetDetail({ asset, getSignedUrl, invalidateSignedUrl, onChanged, onCl
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible>
-      <Pressable onPress={onClose} style={styles.backdrop}>
-        <Pressable onPress={(event) => event.stopPropagation()} style={styles.detail} testID="project-asset-detail">
-          {asset.type === 'image' && url ? <Image resizeMode="contain" source={{ uri: url.url }} style={styles.detailImage} /> : (
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}
+        keyboardVerticalOffset={0}
+        style={styles.detailKeyboard}
+        testID="project-asset-rename-keyboard-layout"
+      >
+        <Pressable onPress={onClose} style={styles.backdrop}>
+          <Pressable onPress={(event) => event.stopPropagation()} style={styles.detail} testID="project-asset-detail">
+            <ScrollView
+              contentContainerStyle={styles.detailContent}
+              keyboardDismissMode="interactive"
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+          {!editing && (asset.type === 'image' && url ? <Image resizeMode="contain" source={{ uri: url.url }} style={styles.detailImage} /> : (
             <View style={styles.documentHero}><Text style={styles.documentHeroType}>{typeLabel(asset)}</Text></View>
-          )}
+          ))}
           {editing ? <>
-            <TextInput autoFocus maxLength={180} onChangeText={setName} style={styles.input} value={name} />
+            <Text style={styles.renameTitle}>Rename display name</Text>
+            <TextInput autoFocus keyboardAppearance="dark" maxLength={180} onChangeText={setName} selectTextOnFocus style={styles.input} value={name} />
             <Pressable disabled={busy || !name.trim()} onPress={() => void act(async () => {
               const updated = await projectAssetService.rename(projectId, asset.id, name);
               setEditing(false);
+              Keyboard.dismiss();
               return updated;
-            })} style={styles.primary}><Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save name'}</Text></Pressable>
+            })} style={styles.primary} testID="save-project-asset-name"><Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save name'}</Text></Pressable>
+            <Pressable onPress={() => { setName(asset.name); setEditing(false); Keyboard.dismiss(); }} style={styles.close} testID="cancel-project-asset-rename"><Text style={styles.closeText}>Cancel</Text></Pressable>
           </> : <>
             <Text style={styles.detailName}>{asset.name}</Text>
             {asset.name !== asset.originalFilename ? <Text style={styles.originalName}>Original: {asset.originalFilename}</Text> : null}
@@ -157,9 +186,11 @@ function AssetDetail({ asset, getSignedUrl, invalidateSignedUrl, onChanged, onCl
             </Pressable>
           </>}
           {actionError ? <Text accessibilityLiveRegion="assertive" style={styles.actionError}>{actionError}</Text> : null}
-          <Pressable onPress={onClose} style={styles.close}><Text style={styles.closeText}>Done</Text></Pressable>
+          {!editing ? <Pressable onPress={onClose} style={styles.close}><Text style={styles.closeText}>Done</Text></Pressable> : null}
+            </ScrollView>
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -327,16 +358,19 @@ const styles = StyleSheet.create({
   archivedToggle: { alignSelf: 'flex-start', marginTop: 20, minHeight: 36, justifyContent: 'center' }, archivedText: { color: '#7F8EA5', fontSize: 12, fontWeight: '600' },
   retry: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 36, marginTop: 8 },
   actionError: { color: '#E39A8E', fontSize: 12, lineHeight: 17, marginTop: 10 },
+  detailKeyboard: { flex: 1 },
   backdrop: { backgroundColor: 'rgba(0,0,0,0.72)', flex: 1, justifyContent: 'flex-end' },
   addSheet: { backgroundColor: '#111113', borderColor: '#29292D', borderTopLeftRadius: 22, borderTopRightRadius: 22, borderWidth: StyleSheet.hairlineWidth, paddingBottom: 26, paddingHorizontal: 16, paddingTop: 18 },
   sheetTitle: { color: '#F2F2F4', fontSize: 18, fontWeight: '600', marginBottom: 12 },
   addChoice: { borderBottomColor: '#29292D', borderBottomWidth: StyleSheet.hairlineWidth, minHeight: 67, justifyContent: 'center' },
   choiceTitle: { color: '#ECECEF', fontSize: 15, fontWeight: '500' }, choiceDetail: { color: '#707076', fontSize: 11, marginTop: 4 },
-  detail: { backgroundColor: '#111113', borderColor: '#29292D', borderTopLeftRadius: 22, borderTopRightRadius: 22, borderWidth: StyleSheet.hairlineWidth, maxHeight: '92%', paddingBottom: 24, paddingHorizontal: 16, paddingTop: 16 },
+  detail: { backgroundColor: '#111113', borderColor: '#29292D', borderTopLeftRadius: 22, borderTopRightRadius: 22, borderWidth: StyleSheet.hairlineWidth, maxHeight: '92%', overflow: 'hidden' },
+  detailContent: { paddingBottom: 24, paddingHorizontal: 16, paddingTop: 16 },
   detailImage: { backgroundColor: '#080809', borderRadius: 12, height: 280, marginBottom: 16, width: '100%' },
   documentHero: { alignItems: 'center', backgroundColor: '#1A1D23', borderRadius: 13, height: 120, justifyContent: 'center', marginBottom: 16 },
   documentHeroType: { color: '#A9B8CE', fontSize: 14, fontWeight: '700', letterSpacing: 1 },
   detailName: { color: '#F0F0F2', fontSize: 19, fontWeight: '600' }, originalName: { color: '#828288', fontSize: 12, marginTop: 6 }, metadata: { color: '#6F6F75', fontSize: 12, marginBottom: 16, marginTop: 7 },
+  renameTitle: { color: '#F0F0F2', fontSize: 19, fontWeight: '600', marginBottom: 14 },
   input: { backgroundColor: '#1B1B1E', borderColor: '#343438', borderRadius: 11, borderWidth: StyleSheet.hairlineWidth, color: '#F4F4F5', fontSize: 15, marginBottom: 11, minHeight: 47, paddingHorizontal: 13 },
   primary: { alignItems: 'center', backgroundColor: '#8AB4F8', borderRadius: 11, justifyContent: 'center', minHeight: 45, marginBottom: 7 }, primaryText: { color: '#08111F', fontSize: 14, fontWeight: '700' },
   row: { borderBottomColor: '#29292D', borderBottomWidth: StyleSheet.hairlineWidth, justifyContent: 'center', minHeight: 48 }, rowText: { color: '#E2E2E5', fontSize: 14 }, archiveText: { color: '#D58F86', fontSize: 14 },

@@ -24,6 +24,7 @@ import type {
   ProjectRepository,
   ProjectRepositoryChanges,
 } from './project-repository';
+import { ProjectAssetFinalPlacementError } from './project-repository';
 
 type DatabaseRow = Record<string, unknown>;
 type ProjectTable =
@@ -457,6 +458,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
     const { data, error } = await this.getClient().rpc('remove_project_asset_from_section', {
       p_asset_id: assetId, p_project_id: projectId, p_section_id: sectionId,
     });
+    if (error?.code === '23514') throw new ProjectAssetFinalPlacementError();
     if (error) throw error;
     if (!data) throw new Error('Supabase returned an invalid Project asset placement result.');
     return toResource(data as DatabaseRow) as ProjectAsset;

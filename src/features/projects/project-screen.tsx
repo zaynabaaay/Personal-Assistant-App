@@ -332,7 +332,7 @@ export default function ProjectScreen() {
           </ScrollView>
 
           {error ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}
-          <View style={[styles.tinaPanel, tinaOpen && styles.tinaPanelOpen]} testID="project-tina-control">
+          <View style={[styles.tinaPanel, tinaOpen ? styles.tinaPanelOpen : styles.tinaPanelClosed]} testID="project-tina-control">
             {tinaOpen ? <>
               <View style={styles.tinaHeader}>
                 <View><Text style={styles.tinaTitle}>Tina</Text><Text style={styles.tinaScope}>Working in {project?.name ?? 'this Project'}</Text></View>
@@ -389,8 +389,9 @@ const styles = StyleSheet.create({
   overviewText: { color: '#C7C7CB', fontSize: 16, lineHeight: 24, marginTop: 10, maxWidth: 560 },
   overviewEmpty: { color: '#68686E', fontSize: 14, lineHeight: 21, maxWidth: 360 },
   customSectionSurface: { minHeight: 300 },
-  tinaPanel: { backgroundColor: '#0C0C0E', borderColor: '#29292D', borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, bottom: 10, overflow: 'hidden', position: 'absolute', right: 12, width: 142 },
-  tinaPanelOpen: { borderBottomLeftRadius: 18, borderBottomRightRadius: 18, height: '62%', left: 12, width: undefined },
+  tinaPanel: { backgroundColor: '#0C0C0E', borderColor: '#29292D', borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, bottom: 10, overflow: 'hidden', position: 'absolute', right: 12 },
+  tinaPanelClosed: { width: 142 },
+  tinaPanelOpen: { borderBottomLeftRadius: 18, borderBottomRightRadius: 18, height: '62%', left: 12 },
   askTina: { alignItems: 'center', flexDirection: 'row', minHeight: 48, paddingHorizontal: 9 },
   tinaMark: { alignItems: 'center', backgroundColor: '#182131', borderRadius: 14, height: 30, justifyContent: 'center', width: 30 },
   tinaMarkText: { color: '#9DB9E6', fontSize: 16 },

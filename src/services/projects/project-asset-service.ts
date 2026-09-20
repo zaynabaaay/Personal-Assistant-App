@@ -6,6 +6,10 @@ import type {
   ProjectAssetUploadReservation,
   ProjectRepository,
 } from './project-repository';
+import {
+  FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE,
+  isProjectAssetFinalPlacementError,
+} from './project-repository';
 import { ProjectService } from './project-service';
 import type { ProjectActivityTouchDiagnostic } from './project-service';
 
@@ -269,6 +273,12 @@ export function isProjectAsset(resource: ProjectResource): resource is ProjectAs
   return Boolean(resource.resourceKind === 'uploaded_asset' && resource.storagePath &&
     resource.sectionId && resource.originalFilename &&
     resource.mimeType && typeof resource.byteSize === 'number' && resource.status);
+}
+
+export function projectAssetMutationErrorMessage(cause: unknown) {
+  return isProjectAssetFinalPlacementError(cause)
+    ? FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE
+    : 'The asset could not be updated.';
 }
 
 export class ProjectAssetService {

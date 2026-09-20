@@ -256,6 +256,12 @@ test('Project-scoped Tina expands inside the workspace and reuses composer behav
   assert.match(screen, /projectId: project\.id/);
   assert.match(screen, /projectName: project\.name/);
   assert.match(screen, /projectChatService\.load\(id\)/);
+  assert.match(screen, /tinaOpen \? styles\.tinaPanelOpen : styles\.tinaPanelClosed/);
+  assert.match(screen, /tinaPanelClosed: \{ width: 142 \}/);
+  assert.match(screen, /tinaPanelOpen: \{[^}]*height: '62%'[^}]*left: 12/);
+  assert.match(screen, /tinaPanel: \{[^}]*right: 12/);
+  assert.doesNotMatch(screen, /tinaPanelOpen: \{[^}]*width:/);
+  assert.doesNotMatch(screen, /width: undefined/);
   assert.doesNotMatch(screen, /Right now|current state|current context/i);
 });
 

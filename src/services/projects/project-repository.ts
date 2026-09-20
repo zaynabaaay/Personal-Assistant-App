@@ -21,6 +21,27 @@ export type ProjectAssetUploadIdentity = {
   objectId: string;
 };
 
+export const FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE =
+  'This material must remain in at least one active section for now.';
+
+export class ProjectAssetFinalPlacementError extends Error {
+  readonly code = 'final-active-placement';
+
+  constructor() {
+    super(FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE);
+    this.name = 'ProjectAssetFinalPlacementError';
+  }
+}
+
+export function isProjectAssetFinalPlacementError(
+  value: unknown,
+): value is ProjectAssetFinalPlacementError {
+  return value instanceof ProjectAssetFinalPlacementError || Boolean(
+    value && typeof value === 'object' &&
+    'code' in value && value.code === 'final-active-placement',
+  );
+}
+
 export type BeginProjectAssetUploadInput = ProjectAssetUploadIdentity & {
   byteSize: number;
   height?: number;
