@@ -110,42 +110,28 @@ function AssetDetail({ asset, getSignedUrl, invalidateSignedUrl, onChanged, onCl
       });
     } finally { actionInFlight.current = false; }
   };
+  const cancelRename = () => {
+    setName(asset.name);
+    setEditing(false);
+    Keyboard.dismiss();
+  };
 
   return (
-    <Modal animationType="fade" onRequestClose={onClose} transparent visible>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}
-        keyboardVerticalOffset={0}
-        style={styles.detailKeyboard}
-        testID="project-asset-rename-keyboard-layout"
-      >
-        <Pressable onPress={onClose} style={styles.backdrop}>
-          <Pressable onPress={(event) => event.stopPropagation()} style={styles.detail} testID="project-asset-detail">
-            <ScrollView
-              contentContainerStyle={styles.detailContent}
-              keyboardDismissMode="interactive"
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-          {!editing && (asset.type === 'image' && url ? <Image resizeMode="contain" source={{ uri: url.url }} style={styles.detailImage} /> : (
+    <Modal animationType="fade" onRequestClose={editing ? cancelRename : onClose} transparent visible>
+      <Pressable onPress={onClose} style={styles.backdrop}>
+        <Pressable onPress={(event) => event.stopPropagation()} style={styles.detail} testID="project-asset-detail">
+          <ScrollView
+            contentContainerStyle={styles.detailContent}
+            showsVerticalScrollIndicator={false}
+          >
+          {asset.type === 'image' && url ? <Image resizeMode="contain" source={{ uri: url.url }} style={styles.detailImage} /> : (
             <View style={styles.documentHero}><Text style={styles.documentHeroType}>{typeLabel(asset)}</Text></View>
-          ))}
-          {editing ? <>
-            <Text style={styles.renameTitle}>Rename display name</Text>
-            <TextInput autoFocus keyboardAppearance="dark" maxLength={180} onChangeText={setName} selectTextOnFocus style={styles.input} value={name} />
-            <Pressable disabled={busy || !name.trim()} onPress={() => void act(async () => {
-              const updated = await projectAssetService.rename(projectId, asset.id, name);
-              setEditing(false);
-              Keyboard.dismiss();
-              return updated;
-            })} style={styles.primary} testID="save-project-asset-name"><Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save name'}</Text></Pressable>
-            <Pressable onPress={() => { setName(asset.name); setEditing(false); Keyboard.dismiss(); }} style={styles.close} testID="cancel-project-asset-rename"><Text style={styles.closeText}>Cancel</Text></Pressable>
-          </> : <>
+          )}
             <Text style={styles.detailName}>{asset.name}</Text>
             {asset.name !== asset.originalFilename ? <Text style={styles.originalName}>Original: {asset.originalFilename}</Text> : null}
             <Text style={styles.metadata}>{typeLabel(asset)} · {readableSize(asset.byteSize)} · Added {new Date(asset.createdAt).toLocaleDateString()}</Text>
             <Pressable disabled={busy} onPress={() => void open()} style={styles.primary} testID="open-project-asset"><Text style={styles.primaryText}>{busy ? 'Opening…' : 'Open original'}</Text></Pressable>
-            <Pressable onPress={() => setEditing(true)} style={styles.row}><Text style={styles.rowText}>Rename display name</Text></Pressable>
+            <Pressable onPress={() => { setActionError(null); setName(asset.name); setEditing(true); }} style={styles.row}><Text style={styles.rowText}>Rename display name</Text></Pressable>
             <Pressable onPress={() => setAdding((value) => !value)} style={styles.row} testID="add-asset-to-section"><Text style={styles.rowText}>Add to section</Text></Pressable>
             {adding ? <View style={styles.sectionChoices}>
               {sections.filter((section) => section.status === 'active' &&
@@ -184,13 +170,32 @@ function AssetDetail({ asset, getSignedUrl, invalidateSignedUrl, onChanged, onCl
               : projectAssetService.restore(projectId, asset.id))} style={styles.row}>
               <Text style={asset.status === 'current' ? styles.archiveText : styles.rowText}>{asset.status === 'current' ? 'Archive' : 'Restore'}</Text>
             </Pressable>
-          </>}
-          {actionError ? <Text accessibilityLiveRegion="assertive" style={styles.actionError}>{actionError}</Text> : null}
-          {!editing ? <Pressable onPress={onClose} style={styles.close}><Text style={styles.closeText}>Done</Text></Pressable> : null}
-            </ScrollView>
+          {!editing && actionError ? <Text accessibilityLiveRegion="assertive" style={styles.actionError}>{actionError}</Text> : null}
+          <Pressable onPress={onClose} style={styles.close}><Text style={styles.closeText}>Done</Text></Pressable>
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+      {editing ? <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}
+        keyboardVerticalOffset={0}
+        style={styles.renameKeyboard}
+        testID="project-asset-rename-keyboard-layout"
+      >
+        <Pressable onPress={cancelRename} style={styles.renameBackdrop}>
+          <Pressable onPress={(event) => event.stopPropagation()} style={styles.renameSheet} testID="project-asset-rename-editor">
+            <Text style={styles.renameTitle}>Rename display name</Text>
+            <TextInput autoFocus keyboardAppearance="dark" maxLength={180} onChangeText={setName} selectTextOnFocus style={styles.input} value={name} />
+            <Pressable disabled={busy || !name.trim()} onPress={() => void act(async () => {
+              const updated = await projectAssetService.rename(projectId, asset.id, name);
+              setEditing(false);
+              Keyboard.dismiss();
+              return updated;
+            })} style={styles.primary} testID="save-project-asset-name"><Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save name'}</Text></Pressable>
+            <Pressable onPress={cancelRename} style={styles.close} testID="cancel-project-asset-rename"><Text style={styles.closeText}>Cancel</Text></Pressable>
+            {actionError ? <Text accessibilityLiveRegion="assertive" style={styles.actionError}>{actionError}</Text> : null}
           </Pressable>
         </Pressable>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingView> : null}
     </Modal>
   );
 }
@@ -358,7 +363,6 @@ const styles = StyleSheet.create({
   archivedToggle: { alignSelf: 'flex-start', marginTop: 20, minHeight: 36, justifyContent: 'center' }, archivedText: { color: '#7F8EA5', fontSize: 12, fontWeight: '600' },
   retry: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 36, marginTop: 8 },
   actionError: { color: '#E39A8E', fontSize: 12, lineHeight: 17, marginTop: 10 },
-  detailKeyboard: { flex: 1 },
   backdrop: { backgroundColor: 'rgba(0,0,0,0.72)', flex: 1, justifyContent: 'flex-end' },
   addSheet: { backgroundColor: '#111113', borderColor: '#29292D', borderTopLeftRadius: 22, borderTopRightRadius: 22, borderWidth: StyleSheet.hairlineWidth, paddingBottom: 26, paddingHorizontal: 16, paddingTop: 18 },
   sheetTitle: { color: '#F2F2F4', fontSize: 18, fontWeight: '600', marginBottom: 12 },
@@ -370,6 +374,9 @@ const styles = StyleSheet.create({
   documentHero: { alignItems: 'center', backgroundColor: '#1A1D23', borderRadius: 13, height: 120, justifyContent: 'center', marginBottom: 16 },
   documentHeroType: { color: '#A9B8CE', fontSize: 14, fontWeight: '700', letterSpacing: 1 },
   detailName: { color: '#F0F0F2', fontSize: 19, fontWeight: '600' }, originalName: { color: '#828288', fontSize: 12, marginTop: 6 }, metadata: { color: '#6F6F75', fontSize: 12, marginBottom: 16, marginTop: 7 },
+  renameKeyboard: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
+  renameBackdrop: { backgroundColor: 'rgba(0,0,0,0.38)', flex: 1, justifyContent: 'flex-end' },
+  renameSheet: { backgroundColor: '#111113', borderColor: '#29292D', borderTopLeftRadius: 22, borderTopRightRadius: 22, borderWidth: StyleSheet.hairlineWidth, paddingBottom: 20, paddingHorizontal: 16, paddingTop: 18 },
   renameTitle: { color: '#F0F0F2', fontSize: 19, fontWeight: '600', marginBottom: 14 },
   input: { backgroundColor: '#1B1B1E', borderColor: '#343438', borderRadius: 11, borderWidth: StyleSheet.hairlineWidth, color: '#F4F4F5', fontSize: 15, marginBottom: 11, minHeight: 47, paddingHorizontal: 13 },
   primary: { alignItems: 'center', backgroundColor: '#8AB4F8', borderRadius: 11, justifyContent: 'center', minHeight: 45, marginBottom: 7 }, primaryText: { color: '#08111F', fontSize: 14, fontWeight: '700' },

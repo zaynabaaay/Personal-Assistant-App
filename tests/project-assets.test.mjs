@@ -710,11 +710,17 @@ test('asset UI stays section-scoped and preserves Project Tina and New Chat beha
   assert.match(surface, /setActionError\(message\)/);
   assert.match(surface, /projectAssetMutationErrorMessage\(cause\)/);
   assert.match(surface, /testID="project-asset-rename-keyboard-layout"/);
+  assert.match(surface, /editing \? <KeyboardAvoidingView/);
   assert.match(surface, /behavior=\{Platform\.OS === 'ios' \? 'padding'/);
-  assert.match(surface, /keyboardShouldPersistTaps="handled"/);
-  assert.match(surface, /!editing && \(asset\.type === 'image'/);
+  assert.match(surface, /testID="project-asset-rename-editor"/);
+  assert.match(surface, /<TextInput autoFocus/);
   assert.match(surface, /testID="save-project-asset-name"/);
   assert.match(surface, /testID="cancel-project-asset-rename"/);
+  const detailScrollEnd = surface.indexOf('</ScrollView>', surface.indexOf('testID="project-asset-detail"'));
+  const renameEditor = surface.indexOf('testID="project-asset-rename-editor"');
+  assert.ok(detailScrollEnd > 0 && renameEditor > detailScrollEnd,
+    'the focused rename editor must stay outside the asset-detail ScrollView');
+  assert.match(surface, /<Pressable onPress=\{onClose\} style=\{styles\.close\}><Text style=\{styles\.closeText\}>Done/);
   assert.match(surface, /finally \{ actionInFlight\.current = false; setBusy\(false\); \}/);
   assert.match(surface, /isProjectAssetSignedUrlFresh/);
   assert.match(surface, /WebBrowser\.openBrowserAsync/);
