@@ -18,11 +18,11 @@ import type {
 
 import type {
   BeginProjectAssetUploadInput,
+  ProjectAssetUploadAttemptState,
   ProjectAssetUploadReservation,
   ProjectRepository,
   ProjectRepositoryChanges,
 } from './project-repository';
-import { ProjectAssetFinalPlacementError } from './project-repository';
 
 type InMemoryUploadAttempt = BeginProjectAssetUploadInput & {
   cleaned: boolean;
@@ -109,12 +109,16 @@ export class InMemoryProjectRepository implements ProjectRepository {
   }
 
   async addAssetPlacement(projectId: string, assetId: string, sectionId: string) {
-    const asset = this.requirePlacementAsset(projectId, assetId);
+    let asset = this.requirePlacementAsset(projectId, assetId);
     this.requirePlacementSection(projectId, sectionId);
     const exists = this.assetPlacements.some((placement) => placement.projectId === projectId &&
       placement.assetId === assetId && placement.sectionId === sectionId);
     if (!exists) {
       this.assetPlacements.push({ assetId, createdAt: new Date().toISOString(), projectId, sectionId });
+      if (!asset.sectionId) {
+        asset = { ...asset, sectionId, updatedAt: new Date().toISOString() };
+        this.resources.set(assetId, clone(asset));
+      }
       await this.touchPlacementActivity(projectId);
     }
     return clone(asset);
@@ -134,8 +138,10 @@ export class InMemoryProjectRepository implements ProjectRepository {
       return this.uploadReservation(existing);
     }
     const project = this.projects.get(input.projectId);
-    const section = this.sections.get(input.sectionId);
-    if (!project || !section || section.projectId !== input.projectId || section.status !== 'active') {
+    const section = input.sectionId ? this.sections.get(input.sectionId) : undefined;
+    if (!project || (input.sectionId && (
+      !section || section.projectId !== input.projectId || section.status !== 'active'
+    ))) {
       throw new Error('Project assets require an active section in the same owned Project.');
     }
     const createdAt = new Date().toISOString();
@@ -152,8 +158,10 @@ export class InMemoryProjectRepository implements ProjectRepository {
     const existing = this.resources.get(attempt.assetId);
     if (attempt.finalized && existing) return clone(existing) as ProjectAsset;
     if (!attempt.objectExists) throw new Error('The exact reserved Storage object does not exist.');
-    const section = this.sections.get(attempt.sectionId);
-    if (!section || section.status !== 'active') throw new Error('Project assets require an active section.');
+    const section = attempt.sectionId ? this.sections.get(attempt.sectionId) : undefined;
+    if (attempt.sectionId && (!section || section.status !== 'active')) {
+      throw new Error('Project assets require an active section.');
+    }
     const type: ProjectAsset['type'] = attempt.mimeType.startsWith('image/') ? 'image' :
       attempt.mimeType === 'application/pdf' ? 'pdf' :
         attempt.mimeType.includes('excel') || attempt.mimeType.includes('spreadsheet') ? 'spreadsheet' : 'document';
@@ -162,13 +170,14 @@ export class InMemoryProjectRepository implements ProjectRepository {
       ...(attempt.height ? { height: attempt.height } : {}), id: attempt.assetId,
       mimeType: attempt.mimeType, name: attempt.originalFilename,
       originalFilename: attempt.originalFilename, projectId: attempt.projectId,
-      resourceKind: 'uploaded_asset', role: 'reference', sectionId: attempt.sectionId,
+      resourceKind: 'uploaded_asset', role: 'reference',
+      ...(attempt.sectionId ? { sectionId: attempt.sectionId } : {}),
       sourceMetadata: { addedAt: attempt.createdAt, kind: 'original-upload', picker: attempt.picker },
       status: 'current', storagePath: attempt.storagePath, type, updatedAt: attempt.createdAt,
       ...(attempt.width ? { width: attempt.width } : {}),
     };
     this.resources.set(asset.id, clone(asset));
-    this.syncAssetPlacement(asset);
+    if (attempt.sectionId) this.syncAssetPlacement(asset);
     attempt.finalized = true;
     return clone(asset);
   }
@@ -183,7 +192,7 @@ export class InMemoryProjectRepository implements ProjectRepository {
     attempt.cleaned = true;
   }
 
-  async reconcileAssetUploads(projectId: string, sectionId: string) {
+  async reconcileAssetUploads(projectId: string, sectionId?: string) {
     for (const attempt of this.uploadAttempts.values()) {
       if (attempt.projectId === projectId && attempt.sectionId === sectionId &&
         !attempt.finalized && !attempt.cleaned && attempt.objectExists) {
@@ -198,21 +207,25 @@ export class InMemoryProjectRepository implements ProjectRepository {
       placement.projectId === projectId && placement.assetId === assetId);
     const removed = placements.find((placement) => placement.sectionId === sectionId);
     if (!removed) return clone(asset);
-    if (placements.length === 1) {
-      throw new ProjectAssetFinalPlacementError();
-    }
     if (asset.sectionId === sectionId) {
       const fallback = placements.filter((placement) => placement.sectionId !== sectionId)
-        .filter((placement) => this.sections.get(placement.sectionId)?.status === 'active')
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) ||
-          left.sectionId.localeCompare(right.sectionId))[0];
-      if (!fallback) {
-        throw new ProjectAssetFinalPlacementError();
-      }
-      const updated = { ...asset, sectionId: fallback.sectionId, updatedAt: new Date().toISOString() };
+        .sort((left, right) => {
+          const leftActive = this.sections.get(left.sectionId)?.status === 'active';
+          const rightActive = this.sections.get(right.sectionId)?.status === 'active';
+          return Number(rightActive) - Number(leftActive) ||
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.sectionId.localeCompare(right.sectionId);
+        })[0];
+      this.deleteAssetPlacement(projectId, assetId, sectionId);
+      const { sectionId: _sectionId, ...withoutDesignation } = asset;
+      const updated: ProjectAsset = {
+        ...withoutDesignation,
+        ...(fallback ? { sectionId: fallback.sectionId } : {}),
+        updatedAt: new Date().toISOString(),
+      };
       this.resources.set(assetId, clone(updated));
-      this.syncAssetPlacement(updated, sectionId);
       asset = updated;
+      await this.touchPlacementActivity(projectId);
     } else {
       this.deleteAssetPlacement(projectId, assetId, sectionId);
       await this.touchPlacementActivity(projectId);
@@ -230,10 +243,15 @@ export class InMemoryProjectRepository implements ProjectRepository {
     }
     if (sourceSectionId === targetSectionId) return clone(asset);
     if (asset.sectionId === sourceSectionId) {
+      const targetExists = this.assetPlacements.some((placement) => placement.projectId === projectId &&
+        placement.assetId === assetId && placement.sectionId === targetSectionId);
+      if (!targetExists) this.assetPlacements.push({ assetId, createdAt: new Date().toISOString(),
+        projectId, sectionId: targetSectionId });
+      this.deleteAssetPlacement(projectId, assetId, sourceSectionId);
       const updated = { ...asset, sectionId: targetSectionId, updatedAt: new Date().toISOString() };
       this.resources.set(assetId, clone(updated));
-      this.syncAssetPlacement(updated, sourceSectionId);
       asset = updated;
+      await this.touchPlacementActivity(projectId);
     } else {
       const targetExists = this.assetPlacements.some((placement) => placement.projectId === projectId &&
         placement.assetId === assetId && placement.sectionId === targetSectionId);
@@ -303,6 +321,18 @@ export class InMemoryProjectRepository implements ProjectRepository {
         left.createdAt.localeCompare(right.createdAt) ||
         left.sectionId.localeCompare(right.sectionId))
       .map(({ projectId: _projectId, ...placement }) => clone(placement));
+  }
+
+  async listAssetUploadAttempts(projectId: string): Promise<ProjectAssetUploadAttemptState[]> {
+    return [...this.uploadAttempts.values()]
+      .filter((attempt) => attempt.projectId === projectId)
+      .map((attempt) => ({
+        assetId: attempt.assetId,
+        projectId: attempt.projectId,
+        ...(attempt.sectionId ? { sectionId: attempt.sectionId } : {}),
+        status: attempt.cleaned ? 'cleaned' as const :
+          attempt.finalized ? 'finalized' as const : 'pending' as const,
+      }));
   }
 
   async listDecisions(projectId: string) {
@@ -410,8 +440,15 @@ export class InMemoryProjectRepository implements ProjectRepository {
 
   async saveResource(resource: ProjectResource) {
     const previous = this.resources.get(resource.id);
+    if (resource.resourceKind === 'uploaded_asset' && previous) {
+      const { sectionId: _incomingSectionId, ...metadata } = resource;
+      this.resources.set(resource.id, clone({
+        ...metadata,
+        ...(previous.sectionId ? { sectionId: previous.sectionId } : {}),
+      }));
+      return;
+    }
     this.resources.set(resource.id, clone(resource));
-    if (resource.resourceKind === 'uploaded_asset') this.syncAssetPlacement(resource, previous?.sectionId);
   }
 
   async saveSection(section: ProjectSection) {
@@ -453,8 +490,15 @@ export class InMemoryProjectRepository implements ProjectRepository {
     apply(this.decisions, changes.decisions);
     changes.resources?.forEach((resource) => {
       const previous = this.resources.get(resource.id);
-      this.resources.set(resource.id, clone(resource));
-      if (resource.resourceKind === 'uploaded_asset') this.syncAssetPlacement(resource, previous?.sectionId);
+      if (resource.resourceKind === 'uploaded_asset' && previous) {
+        const { sectionId: _incomingSectionId, ...metadata } = resource;
+        this.resources.set(resource.id, clone({
+          ...metadata,
+          ...(previous.sectionId ? { sectionId: previous.sectionId } : {}),
+        }));
+      } else {
+        this.resources.set(resource.id, clone(resource));
+      }
     });
     apply(this.sections, changes.sections);
     apply(this.workSessionEntries, changes.workSessionEntries);
@@ -489,14 +533,12 @@ export class InMemoryProjectRepository implements ProjectRepository {
   private uploadReservation(attempt: InMemoryUploadAttempt): ProjectAssetUploadReservation {
     return { assetId: attempt.assetId, attemptId: attempt.attemptId,
       objectExists: attempt.objectExists, objectId: attempt.objectId,
-      projectId: attempt.projectId, sectionId: attempt.sectionId,
+      projectId: attempt.projectId, ...(attempt.sectionId ? { sectionId: attempt.sectionId } : {}),
       status: attempt.finalized ? 'finalized' : 'pending', storagePath: attempt.storagePath };
   }
 
   private syncAssetPlacement(resource: ProjectResource, previousSectionId?: string) {
-    if (!resource.sectionId) {
-      throw new Error('Uploaded Project assets require an authoritative section relationship.');
-    }
+    if (!resource.sectionId) return;
     if (previousSectionId && previousSectionId !== resource.sectionId) {
       this.deleteAssetPlacement(resource.projectId, resource.id, previousSectionId);
     }

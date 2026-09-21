@@ -21,10 +21,6 @@ import {
   runProjectAssetUploadFlow,
   runProjectDocumentPickerFlow,
 } from '../src/services/projects/project-asset-service.ts';
-import {
-  FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE,
-  ProjectAssetFinalPlacementError,
-} from '../src/services/projects/project-repository.ts';
 
 const AT = '2026-08-26T17:00:00.000Z';
 const OWNER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -69,6 +65,62 @@ test('owned Project and active section persist an authoritative original asset a
   assert.deepEqual(new Uint8Array(objects.get(asset.storagePath).bytes), new Uint8Array([1, 2, 3, 4]));
   assert.deepEqual(await repository.getResource(asset.id), asset);
   assert.equal((await service.signedUrl(asset)).url, `https://storage.test/${asset.storagePath}`);
+});
+
+test('Project-level upload creates one current asset with zero placements and remains idempotent', async () => {
+  const { objects, repository, service } = setup();
+  let touches = 0;
+  repository.touchProjectActivity = async () => { touches += 1; };
+  const identity = service.createUploadIdentity();
+  const asset = await service.uploadToProjectWithIdentity('aqal', selection(), identity);
+
+  assert.equal(asset.status, 'current');
+  assert.equal(asset.sectionId, undefined);
+  assert.deepEqual(await service.listPlacements('aqal', asset.id), []);
+  assert.deepEqual((await service.list('aqal')).map(({ id }) => id), [asset.id]);
+  assert.deepEqual(await service.list('aqal', 'materials'), []);
+  assert.equal(objects.has(asset.storagePath), true);
+  assert.equal((await service.signedUrl(asset)).url, `https://storage.test/${asset.storagePath}`);
+
+  const retried = await service.uploadToProjectWithIdentity('aqal', selection(), identity);
+  assert.equal(retried.id, asset.id);
+  assert.deepEqual(await service.listPlacements('aqal', asset.id), []);
+  assert.equal((await repository.listResources('aqal')).length, 1);
+  assert.equal(touches, 1);
+
+  await service.archive('aqal', asset.id);
+  assert.deepEqual(await service.listPlacements('aqal', asset.id), []);
+  await service.restore('aqal', asset.id);
+  assert.deepEqual(await service.listPlacements('aqal', asset.id), []);
+  assert.equal((await repository.getResource(asset.id)).sectionId, undefined);
+});
+
+test('sectionless pending upload reconciliation finalizes once without inventing membership', async () => {
+  const { repository, service } = setup();
+  const identity = service.createUploadIdentity();
+  const normalized = normalizeProjectAssetSelection(selection());
+  await repository.beginAssetUpload({
+    ...identity, byteSize: normalized.byteSize, height: 800, mimeType: normalized.mimeType,
+    originalFilename: normalized.filename, picker: 'photo-library', projectId: 'aqal', width: 1200,
+  });
+  repository.setAssetUploadObjectExists(identity.attemptId, true);
+
+  const first = await service.list('aqal');
+  const second = await service.list('aqal');
+  assert.deepEqual(first.map(({ id }) => id), [identity.assetId]);
+  assert.deepEqual(second.map(({ id }) => id), [identity.assetId]);
+  assert.equal((await repository.getResource(identity.assetId)).sectionId, undefined);
+  assert.deepEqual(await repository.listAssetPlacements('aqal', identity.assetId), []);
+});
+
+test('first Add from zero establishes both placement and compatibility designation', async () => {
+  const { repository, service } = setup();
+  const asset = await service.uploadToProject('aqal', selection());
+  const placed = await service.addToSection('aqal', asset.id, 'materials');
+  assert.equal(placed.sectionId, 'materials');
+  assert.deepEqual((await service.listPlacements('aqal', asset.id)).map(({ sectionId }) => sectionId),
+    ['materials']);
+  assert.equal((await repository.getResource(asset.id)).sectionId, 'materials');
 });
 
 test('PDF and document metadata are stored without claiming content extraction', async () => {
@@ -551,7 +603,7 @@ test('multi-placement Add, Remove, and replacement preserve one stable asset and
   assert.equal(objects.get(asset.storagePath), originalObject);
 });
 
-test('designated removal uses created-at then section ID fallback and final placement removal is atomic', async () => {
+test('designated removal uses created-at then section ID fallback and final removal preserves asset identity', async () => {
   const { objects, repository, service } = setup();
   const asset = await service.upload('aqal', 'materials', selection());
   const stableObject = objects.get(asset.storagePath);
@@ -573,22 +625,18 @@ test('designated removal uses created-at then section ID fallback and final plac
   const updated = await deterministic.removeFromSection('aqal', asset.id, 'materials');
   assert.equal(updated.sectionId, 'a-section');
   await deterministic.removeFromSection('aqal', asset.id, 'z-section');
-  await assert.rejects(
-    deterministic.removeFromSection('aqal', asset.id, 'a-section'),
-    (error) => error instanceof ProjectAssetFinalPlacementError &&
-      error.message === FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE,
-  );
+  const unplaced = await deterministic.removeFromSection('aqal', asset.id, 'a-section');
+  assert.equal(unplaced.sectionId, undefined);
   assert.deepEqual((await deterministic.listPlacements('aqal', asset.id))
-    .map(({ sectionId }) => sectionId), ['a-section']);
+    .map(({ sectionId }) => sectionId), []);
+  await seeded.saveResource({ ...asset, name: 'Stale metadata update' });
+  assert.equal((await seeded.getResource(asset.id)).sectionId, undefined);
+  assert.deepEqual(await deterministic.listPlacements('aqal', asset.id), []);
   assert.equal((await seeded.getResource(asset.id)).id, asset.id);
   assert.equal(objects.get(asset.storagePath), stableObject);
 });
 
-test('final-placement errors have specific safe UI copy while unrelated failures remain generic', () => {
-  assert.equal(
-    projectAssetMutationErrorMessage(new ProjectAssetFinalPlacementError()),
-    FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE,
-  );
+test('placement failures use generic safe UI copy without a retired final-placement condition', () => {
   assert.equal(
     projectAssetMutationErrorMessage(new Error('database connection details')),
     'The asset could not be updated.',
@@ -609,12 +657,14 @@ test('placement mutation recency occurs once, failed operations do not touch, an
   assert.equal(touches, 1);
   await service.removeFromSection('aqal', asset.id, 'overview');
   assert.equal(touches, 2);
-  await assert.rejects(service.removeFromSection('aqal', asset.id, 'materials'), /remain/);
-  assert.equal(touches, 2);
+  const unplaced = await service.removeFromSection('aqal', asset.id, 'materials');
+  assert.equal(unplaced.sectionId, undefined);
+  assert.equal(touches, 3);
   repository.touchProjectActivity = async () => { throw new Error('recency unavailable'); };
   await service.addToSection('aqal', asset.id, 'overview');
   assert.deepEqual((await service.listPlacements('aqal', asset.id)).map(({ sectionId }) => sectionId),
-    ['materials', 'overview']);
+    ['overview']);
+  assert.equal((await repository.getResource(asset.id)).sectionId, 'overview');
 });
 
 test('finalized upload retry does not touch recency and failed retry remains a no-op', async () => {
@@ -639,7 +689,7 @@ test('finalized upload retry does not touch recency and failed retry remains a n
   repository.finalizeAssetUpload = finalize;
 });
 
-test('designated removal skips archived fallback and rejects when no active survivor exists', async () => {
+test('designated removal retains deterministic archived compatibility fallbacks', async () => {
   const { repository, service } = setup();
   await repository.saveSection(section('archived-early', 'aqal'));
   await repository.saveSection(section('active-later', 'aqal'));
@@ -654,11 +704,10 @@ test('designated removal skips archived fallback and rejects when no active surv
 
   await repository.saveSection({ ...(await repository.getSection('active-later')),
     status: 'archived' });
-  await assert.rejects(
-    service.removeFromSection('aqal', asset.id, 'active-later'),
-    /at least one active section/i,
-  );
-  assert.equal((await repository.getResource(asset.id)).sectionId, 'active-later');
+  const fallback = await service.removeFromSection('aqal', asset.id, 'active-later');
+  assert.equal(fallback.sectionId, 'archived-early');
+  const unplaced = await service.removeFromSection('aqal', asset.id, 'archived-early');
+  assert.equal(unplaced.sectionId, undefined);
 });
 
 test('section archive and restore preserve multiple attached asset identities', async () => {

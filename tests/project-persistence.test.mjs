@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import { PostgrestClient } from '@supabase/postgrest-js';
+
 import { ProjectService } from '../src/services/projects/project-service.ts';
-import { ProjectAssetFinalPlacementError } from '../src/services/projects/project-repository.ts';
 import { SupabaseProjectRepository } from '../src/services/projects/supabase-project-repository.ts';
 
 const OWNER_A = '11111111-1111-1111-1111-111111111111';
@@ -227,13 +228,14 @@ test('Supabase placement and Project-global asset reads are owner and Project sc
   assert.deepEqual(await repository(database, OWNER_B).listSectionAssetPlacements('project-2', 'other-section'), []);
 });
 
-test('Supabase removal maps only the final-placement constraint code to a typed condition', async () => {
+test('Supabase removal preserves database failures without a retired final-placement mapping', async () => {
+  const failure = { code: '23514', message: 'database detail' };
   const finalPlacement = new SupabaseProjectRepository(() => ({
-    rpc: async () => ({ data: null, error: { code: '23514', message: 'database detail' } }),
+    rpc: async () => ({ data: null, error: failure }),
   }));
   await assert.rejects(
     finalPlacement.removeAssetPlacement(PROJECT_ID, 'asset-a', 'section-1'),
-    ProjectAssetFinalPlacementError,
+    (error) => error === failure,
   );
 
   const unrelated = { code: '42501', message: 'database authorization detail' };
@@ -244,6 +246,51 @@ test('Supabase removal maps only the final-placement constraint code to a typed 
     unknownFailure.removeAssetPlacement(PROJECT_ID, 'asset-a', 'section-1'),
     (error) => error === unrelated,
   );
+});
+
+test('Supabase serializes nullable and section-scoped upload reservation boundaries exactly', async () => {
+  const requests = [];
+  const postgrest = new PostgrestClient('https://example.invalid/rest/v1', {
+    fetch: async (url, init) => {
+      const body = JSON.parse(String(init.body));
+      requests.push({ body, url: String(url) });
+      const data = String(url).endsWith('/rpc/begin_project_asset_upload') ? {
+        asset_id: body.p_asset_id,
+        attempt_id: body.p_attempt_id,
+        object_exists: false,
+        object_id: body.p_object_id,
+        project_id: body.p_project_id,
+        section_id: body.p_section_id,
+        status: 'pending',
+        storage_path: `${OWNER_A}/${body.p_project_id}/${body.p_asset_id}/${body.p_object_id}`,
+      } : null;
+      return new Response(JSON.stringify(data), {
+        headers: { 'content-type': 'application/json' }, status: 200,
+      });
+    },
+  });
+  const assets = new SupabaseProjectRepository(() => postgrest);
+  const input = {
+    assetId: 'asset-global', attemptId: 'attempt-global', byteSize: 4,
+    height: 1, mimeType: 'image/png', objectId: 'object-global',
+    originalFilename: 'global.png', picker: 'photo-library', projectId: PROJECT_ID, width: 1,
+  };
+
+  await assets.beginAssetUpload(input);
+  await assets.beginAssetUpload(input);
+  await assets.beginAssetUpload({
+    ...input, assetId: 'asset-section', attemptId: 'attempt-section',
+    objectId: 'object-section', sectionId: 'section-1',
+  });
+  await assets.reconcileAssetUploads(PROJECT_ID);
+  await assets.reconcileAssetUploads(PROJECT_ID, 'section-1');
+
+  const reservationBodies = requests.slice(0, 3).map(({ body }) => body);
+  assert.equal(Object.hasOwn(reservationBodies[0], 'p_section_id'), true);
+  assert.equal(reservationBodies[0].p_section_id, null);
+  assert.equal(reservationBodies[1].p_section_id, null);
+  assert.equal(reservationBodies[2].p_section_id, 'section-1');
+  assert.deepEqual(requests.slice(3).map(({ body }) => body.p_section_id), [null, 'section-1']);
 });
 
 test('new Project and Overview use one atomic repository commit', async () => {

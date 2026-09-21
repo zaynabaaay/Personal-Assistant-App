@@ -6,10 +6,6 @@ import type {
   ProjectAssetUploadReservation,
   ProjectRepository,
 } from './project-repository';
-import {
-  FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE,
-  isProjectAssetFinalPlacementError,
-} from './project-repository';
 import { ProjectService } from './project-service';
 import type { ProjectActivityTouchDiagnostic } from './project-service';
 
@@ -271,14 +267,12 @@ export function normalizeProjectAssetSelection(selection: PickedProjectAsset) {
 
 export function isProjectAsset(resource: ProjectResource): resource is ProjectAsset {
   return Boolean(resource.resourceKind === 'uploaded_asset' && resource.storagePath &&
-    resource.sectionId && resource.originalFilename &&
+    resource.originalFilename &&
     resource.mimeType && typeof resource.byteSize === 'number' && resource.status);
 }
 
-export function projectAssetMutationErrorMessage(cause: unknown) {
-  return isProjectAssetFinalPlacementError(cause)
-    ? FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE
-    : 'The asset could not be updated.';
+export function projectAssetMutationErrorMessage(_cause: unknown) {
+  return 'The asset could not be updated.';
 }
 
 export class ProjectAssetService {
@@ -306,9 +300,9 @@ export class ProjectAssetService {
 
   async list(projectId: string, sectionId?: string, includeArchived = false) {
     await this.requireProject(projectId);
+    await this.repository.reconcileAssetUploads(projectId, sectionId);
     if (!sectionId) return (await this.repository.listProjectAssets(projectId))
       .filter((asset) => includeArchived || asset.status === 'current');
-    await this.repository.reconcileAssetUploads(projectId, sectionId);
     return (await this.repository.listSectionAssets(projectId, sectionId))
       .filter((asset) => includeArchived || asset.status === 'current');
   }
@@ -340,12 +334,28 @@ export class ProjectAssetService {
     return this.uploadWithIdentity(projectId, sectionId, selection, this.createUploadIdentity());
   }
 
+  async uploadToProject(projectId: string, selection: PickedProjectAsset) {
+    return this.uploadToProjectWithIdentity(projectId, selection, this.createUploadIdentity());
+  }
+
   createUploadIdentity(): ProjectAssetUploadIdentity {
     return { assetId: this.createId(), attemptId: this.createId(), objectId: this.createId() };
   }
 
   async uploadWithIdentity(projectId: string, sectionId: string, selection: PickedProjectAsset,
     identity: ProjectAssetUploadIdentity) {
+    await this.requireActiveSection(projectId, sectionId);
+    return this.uploadWithOptionalSection(projectId, sectionId, selection, identity);
+  }
+
+  async uploadToProjectWithIdentity(projectId: string, selection: PickedProjectAsset,
+    identity: ProjectAssetUploadIdentity) {
+    await this.requireProject(projectId);
+    return this.uploadWithOptionalSection(projectId, undefined, selection, identity);
+  }
+
+  private async uploadWithOptionalSection(projectId: string, sectionId: string | undefined,
+    selection: PickedProjectAsset, identity: ProjectAssetUploadIdentity) {
     const running = this.uploads.get(identity.attemptId);
     if (running) return running;
     const operation = this.performUpload(projectId, sectionId, selection, identity);
@@ -374,6 +384,7 @@ export class ProjectAssetService {
     const asset = await this.requireAsset(projectId, assetId);
     await this.requireActiveSection(projectId, sectionId);
     if (asset.sectionId === sectionId) return asset;
+    if (!asset.sectionId) return this.repository.addAssetPlacement(projectId, assetId, sectionId);
     return this.repository.replaceAssetPlacement(projectId, assetId, asset.sectionId, sectionId);
   }
 
@@ -407,14 +418,14 @@ export class ProjectAssetService {
     return resource;
   }
 
-  private async performUpload(projectId: string, sectionId: string, selection: PickedProjectAsset,
+  private async performUpload(projectId: string, sectionId: string | undefined, selection: PickedProjectAsset,
     identity: ProjectAssetUploadIdentity) {
-    await this.requireActiveSection(projectId, sectionId);
     const normalized = normalizeProjectAssetSelection(selection);
     let reservation = await this.repository.beginAssetUpload({
       ...identity, byteSize: normalized.byteSize,
       ...(selection.height ? { height: selection.height } : {}), mimeType: normalized.mimeType,
-      originalFilename: normalized.filename, picker: selection.source, projectId, sectionId,
+      originalFilename: normalized.filename, picker: selection.source, projectId,
+      ...(sectionId ? { sectionId } : {}),
       ...(selection.width ? { width: selection.width } : {}),
     });
     if (reservation.status === 'finalized') {
@@ -433,7 +444,8 @@ export class ProjectAssetService {
         reservation = await this.repository.beginAssetUpload({
           ...identity, byteSize: normalized.byteSize,
           ...(selection.height ? { height: selection.height } : {}), mimeType: normalized.mimeType,
-          originalFilename: normalized.filename, picker: selection.source, projectId, sectionId,
+          originalFilename: normalized.filename, picker: selection.source, projectId,
+          ...(sectionId ? { sectionId } : {}),
           ...(selection.width ? { width: selection.width } : {}),
         });
         if (!reservation.objectExists) throw uploadError;

@@ -111,7 +111,7 @@ test('placement section read is equivalent to the authoritative direct section l
   assert.equal((await verifyProjectAssetPlacementShadow(value, 'project-a')).isValid, true);
 });
 
-test('in-memory shadow reads follow Stage 1 Move while metadata-only writes preserve placement', async () => {
+test('metadata-only writes preserve authoritative placements and ignore stale compatibility input', async () => {
   const value = repository();
   const original = await value.getResource('asset-a');
   const before = await value.listAssetPlacements('project-a', 'asset-a');
@@ -120,11 +120,12 @@ test('in-memory shadow reads follow Stage 1 Move while metadata-only writes pres
 
   await value.saveResource({ ...original, sectionId: 'section-b', updatedAt: LATE });
   assert.deepEqual(await value.listAssetPlacements('project-a', 'asset-a'), [{
-    assetId: 'asset-a', createdAt: LATE, sectionId: 'section-b',
+    assetId: 'asset-a', createdAt: EARLY, sectionId: 'section-a',
   }]);
-  assert.deepEqual(await value.listSectionAssetPlacements('project-a', 'section-a'), [{
-    assetId: 'asset-b', createdAt: LATE, sectionId: 'section-a',
-  }]);
+  assert.deepEqual(await value.listSectionAssetPlacements('project-a', 'section-a'), [
+    { assetId: 'asset-a', createdAt: EARLY, sectionId: 'section-a' },
+    { assetId: 'asset-b', createdAt: LATE, sectionId: 'section-a' },
+  ]);
 });
 
 test('explicit verification detects missing and missing-designation drift while accepting multiple placements', async () => {
@@ -132,7 +133,7 @@ test('explicit verification detects missing and missing-designation drift while 
     { assetId: 'asset-b', createdAt: LATE, projectId: 'project-a', sectionId: 'section-a' },
   ] });
   assert.deepEqual((await verifyProjectAssetPlacementShadow(missing, 'project-a')).mismatches
-    .map(({ assetId, kind }) => [assetId, kind]), [['asset-a', 'missing_placement']]);
+    .map(({ assetId, kind }) => [assetId, kind]), [['asset-a', 'wrong_section']]);
 
   const wrong = repository({ assetPlacements: [
     { assetId: 'asset-a', createdAt: EARLY, projectId: 'project-a', sectionId: 'section-b' },
@@ -149,6 +150,23 @@ test('explicit verification detects missing and missing-designation drift while 
   assert.equal((await verifyProjectAssetPlacementShadow(multiple, 'project-a')).isValid, true);
 });
 
+test('Stage 2C verification accepts a current asset with zero placements and null compatibility', async () => {
+  const unplaced = asset('asset-unplaced', undefined);
+  const value = repository({
+    assetPlacements: [
+      { assetId: 'asset-a', createdAt: EARLY, projectId: 'project-a', sectionId: 'section-a' },
+      { assetId: 'asset-b', createdAt: LATE, projectId: 'project-a', sectionId: 'section-a' },
+    ],
+    resources: [
+      asset('asset-a', 'section-a'), asset('asset-b', 'section-a', { status: 'archived' }),
+      legacy('legacy-a'), unplaced,
+    ],
+  });
+  const verification = await verifyProjectAssetPlacementShadow(value, 'project-a');
+  assert.equal(verification.isValid, true);
+  assert.equal(verification.assetsChecked, 3);
+});
+
 test('explicit verification detects placements on the wrong resource kind and orphan rows', async () => {
   const value = repository({ assetPlacements: [
     { assetId: 'asset-a', createdAt: EARLY, projectId: 'project-a', sectionId: 'section-a' },
@@ -160,5 +178,27 @@ test('explicit verification detects placements on the wrong resource kind and or
     .map(({ assetId, kind }) => [assetId, kind]), [
     ['legacy-a', 'wrong_resource_kind'],
     ['missing-resource', 'placement_without_resource'],
+  ]);
+});
+
+test('explicit verification detects invalid pending, finalized, and cleaned upload-attempt states', async () => {
+  const value = repository({ assetPlacements: [
+    { assetId: 'asset-a', createdAt: EARLY, projectId: 'project-a', sectionId: 'section-a' },
+    { assetId: 'asset-b', createdAt: LATE, projectId: 'project-a', sectionId: 'section-a' },
+  ] });
+  value.listAssetUploadAttempts = async () => [
+    { assetId: 'asset-a', projectId: 'project-a', sectionId: 'section-a', status: 'pending' },
+    { assetId: 'missing-finalized', projectId: 'project-a', status: 'finalized' },
+    { assetId: 'asset-b', projectId: 'project-a', sectionId: 'section-a', status: 'cleaned' },
+  ];
+
+  const verification = await verifyProjectAssetPlacementShadow(value, 'project-a');
+  assert.equal(verification.attemptsChecked, 3);
+  assert.deepEqual(verification.mismatches.map(({ assetId, kind }) => [assetId, kind]), [
+    ['asset-a', 'pending_attempt_with_placement'],
+    ['asset-a', 'pending_attempt_with_resource'],
+    ['asset-b', 'cleaned_attempt_with_placement'],
+    ['asset-b', 'cleaned_attempt_with_resource'],
+    ['missing-finalized', 'finalized_attempt_without_resource'],
   ]);
 });

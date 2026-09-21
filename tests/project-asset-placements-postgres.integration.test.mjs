@@ -15,6 +15,7 @@ const AT = '2026-09-03T12:00:00.000Z';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PLACEMENT_MIGRATION = '20260903120000_add_project_asset_section_placements.sql';
 const MULTI_PLACEMENT_MIGRATION = '20260908120000_add_project_asset_multi_placements.sql';
+const GLOBAL_ASSET_MIGRATION = '20260920120000_enable_project_global_assets.sql';
 let admin;
 let databaseDir;
 let databasePort;
@@ -162,6 +163,7 @@ before(async () => {
     created_at,updated_at from public.project_resources order by id`)).rows;
   await migrate(PLACEMENT_MIGRATION);
   await migrate(MULTI_PLACEMENT_MIGRATION);
+  await migrate(GLOBAL_ASSET_MIGRATION);
 });
 
 after(async () => {
@@ -301,7 +303,88 @@ test('successful finalization atomically creates one matching placement and retr
   }
 });
 
-test('current Move atomically replaces the shadow placement and a failed Move changes neither', async () => {
+test('Project-level finalization and reconciliation remain sectionless and idempotent', async () => {
+  const owner = await client(OWNER_A);
+  try {
+    const attempt = await reserve(owner, 'project-global', { sectionId: null });
+    await store(owner, attempt.storage_path);
+    const first = await finalize(owner, attempt.attempt_id);
+    const retriedReservation = await reserve(owner, 'project-global', { sectionId: null });
+    const second = await finalize(owner, retriedReservation.attempt_id);
+    assert.equal(second.id, first.id);
+    assert.equal(first.section_id, null);
+    assert.equal((await owner.query(`select count(*) count
+      from public.project_asset_section_placements where asset_id=$1`, [first.id])).rows[0].count, '0');
+
+    const pending = await reserve(owner, 'project-global-reconcile', { sectionId: null });
+    await store(owner, pending.storage_path);
+    await owner.query('select public.reconcile_project_asset_uploads($1,$2)', ['aqal', null]);
+    await owner.query('select public.reconcile_project_asset_uploads($1,$2)', ['aqal', null]);
+    const reconciled = (await owner.query(`select id,section_id,status from public.project_resources
+      where id=$1`, [pending.asset_id])).rows;
+    assert.deepEqual(reconciled, [{ id: pending.asset_id, section_id: null, status: 'current' }]);
+    assert.equal((await owner.query(`select count(*) count
+      from public.project_asset_section_placements where asset_id=$1`, [pending.asset_id])).rows[0].count, '0');
+  } finally { await owner.end(); }
+});
+
+test('first Add and final Remove atomically maintain the compatibility designation', async () => {
+  const owner = await client(OWNER_A);
+  try {
+    const asset = await createFinalized(owner, 'zero-to-one-to-zero', { sectionId: null });
+    const storagePath = asset.storage_path;
+    const placed = (await owner.query(
+      'select * from public.add_project_asset_to_section($1,$2,$3)',
+      ['aqal', asset.id, 'materials'],
+    )).rows[0];
+    assert.equal(placed.section_id, 'materials');
+    assert.deepEqual((await owner.query(`select section_id
+      from public.project_asset_section_placements where asset_id=$1`, [asset.id])).rows,
+    [{ section_id: 'materials' }]);
+
+    await assert.rejects(owner.query(`update public.project_resources set section_id=null
+      where id=$1`, [asset.id]), /maintained by placement operations/i);
+    assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
+      [asset.id])).rows[0].section_id, 'materials');
+
+    const unplaced = (await owner.query(
+      'select * from public.remove_project_asset_from_section($1,$2,$3)',
+      ['aqal', asset.id, 'materials'],
+    )).rows[0];
+    assert.equal(unplaced.section_id, null);
+    assert.equal(unplaced.id, asset.id);
+    assert.equal(unplaced.storage_path, storagePath);
+    assert.equal((await owner.query(`select count(*) count
+      from public.project_asset_section_placements where asset_id=$1`, [asset.id])).rows[0].count, '0');
+    assert.equal((await owner.query(`select count(*) count from storage.objects where name=$1`,
+      [storagePath])).rows[0].count, '1');
+  } finally { await owner.end(); }
+});
+
+test('read-only invariant verification detects compatibility drift without repairing it', async () => {
+  const asset = await (async () => {
+    const owner = await client(OWNER_A);
+    try { return await createFinalized(owner, 'verification-drift'); } finally { await owner.end(); }
+  })();
+  await admin.query('begin');
+  try {
+    await admin.query('alter table public.project_resources disable trigger project_resources_validate_asset_relationships');
+    await admin.query('alter table public.project_resources disable trigger project_resources_sync_asset_section_placement');
+    await admin.query('update public.project_resources set section_id=null where id=$1', [asset.id]);
+    await admin.query('savepoint before_verification');
+    await assert.rejects(
+      admin.query('select private.backfill_project_asset_section_placements()'),
+      /compatibility designation does not match/i,
+    );
+    await admin.query('rollback to savepoint before_verification');
+    assert.equal((await admin.query(`select count(*) count
+      from public.project_asset_section_placements where asset_id=$1`, [asset.id])).rows[0].count, '1');
+  } finally {
+    await admin.query('rollback');
+  }
+});
+
+test('direct compatibility updates cannot Move while the Stage 2B Replace RPC remains atomic', async () => {
   const owner = await client(OWNER_A);
   try {
     const id = 'asset-existing-current';
@@ -310,13 +393,23 @@ test('current Move atomically replaces the shadow placement and a failed Move ch
     const objectCountBefore = Number((await owner.query(`select count(*) count from storage.objects
       where name=$1`, [storageBefore])).rows[0].count);
 
-    await owner.query("update public.project_resources set section_id='notes',updated_at=now() where id=$1", [id]);
+    await assert.rejects(
+      owner.query("update public.project_resources set section_id='notes',updated_at=now() where id=$1", [id]),
+      /maintained by placement operations/i,
+    );
+    assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
+      [id])).rows[0].section_id, 'materials');
+    assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1`, [id])).rows, [{ section_id: 'materials' }]);
+
+    await owner.query('select public.replace_project_asset_section($1,$2,$3,$4)',
+      ['aqal', id, 'materials', 'notes']);
     assert.equal((await owner.query('select section_id from public.project_resources where id=$1', [id])).rows[0].section_id, 'notes');
     assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
       where asset_id=$1`, [id])).rows, [{ section_id: 'notes' }]);
 
-    await assert.rejects(owner.query(`update public.project_resources
-      set section_id='other-a-section',updated_at=now() where id=$1`, [id]), /active section|foreign key/i);
+    await assert.rejects(owner.query('select public.replace_project_asset_section($1,$2,$3,$4)',
+      ['aqal', id, 'notes', 'other-a-section']), /not active/i);
     assert.equal((await owner.query('select section_id from public.project_resources where id=$1', [id])).rows[0].section_id, 'notes');
     assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
       where asset_id=$1`, [id])).rows, [{ section_id: 'notes' }]);
@@ -406,28 +499,92 @@ test('Stage 2B Add supports two and three memberships without changing asset or 
   } finally { await owner.end(); }
 });
 
-test('old-client A to B Move replaces only the designated placement and metadata updates preserve extras', async () => {
+test('Stage 2B metadata PATCHes with the current designation preserve every placement', async () => {
   const owner = await client(OWNER_A);
   try {
-    const asset = await createFinalized(owner, 'legacy-multi-move');
+    const asset = await createFinalized(owner, 'stage-2b-current-metadata');
     await owner.query('select public.add_project_asset_to_section($1,$2,$3)', ['aqal', asset.id, 'fallback-a']);
     await owner.query('select public.add_project_asset_to_section($1,$2,$3)', ['aqal', asset.id, 'fallback-b']);
-    await owner.query("update public.project_resources set section_id='notes' where id=$1", [asset.id]);
-    assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
-      [asset.id])).rows[0].section_id, 'notes');
+    const expectedPlacements = [
+      { section_id: 'fallback-a' }, { section_id: 'fallback-b' }, { section_id: 'materials' },
+    ];
+    const patch = async (name, status) => owner.query(`update public.project_resources
+      set description=$2,name=$3,section_id=$4,status=$5,updated_at=now() where id=$1`,
+    [asset.id, 'Stage 2B metadata', name, 'materials', status]);
+
+    await patch('Renamed', 'current');
     assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
-      where asset_id=$1 order by section_id`, [asset.id])).rows, [
-      { section_id: 'fallback-a' }, { section_id: 'fallback-b' }, { section_id: 'notes' },
-    ]);
-    await owner.query("update public.project_resources set name='Renamed',status='archived',updated_at=now() where id=$1", [asset.id]);
+      where asset_id=$1 order by section_id`, [asset.id])).rows, expectedPlacements);
+    await patch('Renamed', 'archived');
     assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
-      where asset_id=$1 order by section_id`, [asset.id])).rows, [
-      { section_id: 'fallback-a' }, { section_id: 'fallback-b' }, { section_id: 'notes' },
-    ]);
+      where asset_id=$1 order by section_id`, [asset.id])).rows, expectedPlacements);
+    await patch('Renamed', 'current');
+    assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1 order by section_id`, [asset.id])).rows, expectedPlacements);
+    assert.deepEqual((await owner.query(`select name,status,section_id from public.project_resources
+      where id=$1`, [asset.id])).rows[0],
+    { name: 'Renamed', section_id: 'materials', status: 'current' });
   } finally { await owner.end(); }
 });
 
-test('Remove preserves unrelated memberships, uses exact deterministic fallback, and guards the final placement', async () => {
+test('stale Stage 2B rename, archive, and restore cannot resurrect a final placement', async () => {
+  const owner = await client(OWNER_A);
+  try {
+    for (const operation of ['rename', 'archive', 'restore']) {
+      const asset = await createFinalized(owner, `stale-final-${operation}`);
+      if (operation === 'restore') {
+        await owner.query(`update public.project_resources set section_id='materials',status='archived'
+          where id=$1`, [asset.id]);
+      }
+      await owner.query('select public.remove_project_asset_from_section($1,$2,$3)',
+        ['aqal', asset.id, 'materials']);
+      const status = operation === 'archive' ? 'archived' : 'current';
+      const name = operation === 'rename' ? 'Stale rename' : asset.name;
+      await assert.rejects(owner.query(`update public.project_resources
+        set description=null,name=$2,section_id='materials',status=$3,updated_at=now()
+        where id=$1`, [asset.id, name, status]), /maintained by placement operations/i);
+      assert.equal((await owner.query(`select count(*) count
+        from public.project_asset_section_placements where asset_id=$1`, [asset.id])).rows[0].count, '0');
+      const resource = (await owner.query(`select name,status,section_id from public.project_resources
+        where id=$1`, [asset.id])).rows[0];
+      assert.equal(resource.section_id, null);
+      assert.equal(resource.status, operation === 'restore' ? 'archived' : 'current');
+      if (operation === 'rename') assert.notEqual(resource.name, 'Stale rename');
+    }
+  } finally { await owner.end(); }
+});
+
+test('stale Stage 2B metadata cannot replace a newer designation whether the old placement is absent or retained', async () => {
+  const owner = await client(OWNER_A);
+  try {
+    const removedOld = await createFinalized(owner, 'stale-designation-removed');
+    await owner.query('select public.replace_project_asset_section($1,$2,$3,$4)',
+      ['aqal', removedOld.id, 'materials', 'notes']);
+    await assert.rejects(owner.query(`update public.project_resources
+      set description=null,name='Stale',section_id='materials',status='current',updated_at=now()
+      where id=$1`, [removedOld.id]), /maintained by placement operations/i);
+    assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
+      [removedOld.id])).rows[0].section_id, 'notes');
+    assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1`, [removedOld.id])).rows, [{ section_id: 'notes' }]);
+
+    const retainedOld = await createFinalized(owner, 'stale-designation-retained');
+    await owner.query('select public.replace_project_asset_section($1,$2,$3,$4)',
+      ['aqal', retainedOld.id, 'materials', 'notes']);
+    await owner.query('select public.add_project_asset_to_section($1,$2,$3)',
+      ['aqal', retainedOld.id, 'materials']);
+    await assert.rejects(owner.query(`update public.project_resources
+      set description=null,name='Stale',section_id='materials',status='current',updated_at=now()
+      where id=$1`, [retainedOld.id]), /maintained by placement operations/i);
+    assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
+      [retainedOld.id])).rows[0].section_id, 'notes');
+    assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1 order by section_id`, [retainedOld.id])).rows,
+    [{ section_id: 'materials' }, { section_id: 'notes' }]);
+  } finally { await owner.end(); }
+});
+
+test('Remove preserves unrelated memberships, uses exact fallback, and permits a final removal', async () => {
   const owner = await client(OWNER_A);
   try {
     const asset = await createFinalized(owner, 'remove-fallback');
@@ -444,8 +601,12 @@ test('Remove preserves unrelated memberships, uses exact deterministic fallback,
       where asset_id=$1 order by section_id`, [asset.id])).rows,
     [{ section_id: 'fallback-a' }, { section_id: 'fallback-b' }]);
     await owner.query('select public.remove_project_asset_from_section($1,$2,$3)', ['aqal', asset.id, 'fallback-b']);
-    await assert.rejects(owner.query('select public.remove_project_asset_from_section($1,$2,$3)',
-      ['aqal', asset.id, 'fallback-a']), /remain in at least one section/i);
+    await owner.query('select public.remove_project_asset_from_section($1,$2,$3)',
+      ['aqal', asset.id, 'fallback-a']);
+    assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
+      [asset.id])).rows[0].section_id, null);
+    assert.equal((await owner.query(`select count(*) count from public.project_asset_section_placements
+      where asset_id=$1`, [asset.id])).rows[0].count, '0');
     assert.equal((await owner.query('select count(*) count from public.project_resources where id=$1',
       [asset.id])).rows[0].count, '1');
     assert.equal((await owner.query('select count(*) count from storage.objects where name=$1',
@@ -453,14 +614,15 @@ test('Remove preserves unrelated memberships, uses exact deterministic fallback,
   } finally { await owner.end(); }
 });
 
-test('designated removal skips archived candidates and rejects without an active survivor', async () => {
+test('designated removal prefers active compatibility fallbacks and retains archived relationships', async () => {
   const owner = await client(OWNER_A);
   try {
     await owner.query(`insert into public.project_sections(
       owner_id,id,created_at,is_default,position,project_id,status,title,updated_at
     ) values
       ($1,'archived-fallback','${AT}',false,20,'aqal','active','Archived fallback','${AT}'),
-      ($1,'active-fallback','${AT}',false,21,'aqal','active','Active fallback','${AT}')`, [OWNER_A]);
+      ($1,'active-fallback','${AT}',false,21,'aqal','active','Active fallback','${AT}'),
+      ($1,'archived-only','${AT}',false,22,'aqal','active','Archived only','${AT}')`, [OWNER_A]);
     const asset = await createFinalized(owner, 'active-fallback-selection');
     await owner.query('select public.add_project_asset_to_section($1,$2,$3)',
       ['aqal', asset.id, 'archived-fallback']);
@@ -476,12 +638,29 @@ test('designated removal skips archived candidates and rejects without an active
       ['aqal', asset.id, 'materials']);
     assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
       [asset.id])).rows[0].section_id, 'active-fallback');
-
-    await owner.query("update public.project_sections set status='archived' where id='active-fallback'");
-    await assert.rejects(owner.query('select public.remove_project_asset_from_section($1,$2,$3)',
-      ['aqal', asset.id, 'active-fallback']), /at least one active section/i);
+    await owner.query('select public.replace_project_asset_section($1,$2,$3,$4)',
+      ['aqal', asset.id, 'active-fallback', 'notes']);
     assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
-      [asset.id])).rows[0].section_id, 'active-fallback');
+      [asset.id])).rows[0].section_id, 'notes');
+    assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1 order by section_id`, [asset.id])).rows,
+    [{ section_id: 'archived-fallback' }, { section_id: 'notes' }]);
+
+    const archivedOnly = await createFinalized(owner, 'archived-only-selection');
+    await owner.query('select public.add_project_asset_to_section($1,$2,$3)',
+      ['aqal', archivedOnly.id, 'archived-only']);
+    await owner.query("update public.project_sections set status='archived' where id='archived-only'");
+    await owner.query('select public.remove_project_asset_from_section($1,$2,$3)',
+      ['aqal', archivedOnly.id, 'materials']);
+    assert.equal((await owner.query('select section_id from public.project_resources where id=$1',
+      [archivedOnly.id])).rows[0].section_id, 'archived-only');
+
+    await owner.query("update public.project_sections set status='active' where id in ('archived-fallback','archived-only')");
+    assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1 order by section_id`, [asset.id])).rows,
+    [{ section_id: 'archived-fallback' }, { section_id: 'notes' }]);
+    assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1`, [archivedOnly.id])).rows, [{ section_id: 'archived-only' }]);
   } finally { await owner.end(); }
 });
 
@@ -556,7 +735,7 @@ test('section archive and Add serialize in both commit orders', async () => {
   }
 });
 
-test('archive-first rejects Replace and legacy direct Move without partial placement changes', async () => {
+test('archive-first rejects Replace and direct compatibility updates cannot bypass placement RPCs', async () => {
   const placement = await client(OWNER_A);
   const archive = await client(OWNER_A);
   try {
@@ -569,9 +748,14 @@ test('archive-first rejects Replace and legacy direct Move without partial place
           ['aqal', asset.id, 'materials', 'fallback-b'])
         : placement.query("update public.project_resources set section_id='fallback-b' where id=$1",
           [asset.id]);
-      await assertStillPending(operation, `${kind} after archive`);
-      await archive.query('commit');
-      await assert.rejects(operation, /not active|active section/i);
+      if (kind === 'replace') {
+        await assertStillPending(operation, `${kind} after archive`);
+        await archive.query('commit');
+        await assert.rejects(operation, /not active|active section/i);
+      } else {
+        await assert.rejects(operation, /maintained by placement operations/i);
+        await archive.query('commit');
+      }
       assert.equal((await placement.query('select section_id from public.project_resources where id=$1',
         [asset.id])).rows[0].section_id, 'materials');
       assert.deepEqual((await placement.query(`select section_id
@@ -666,6 +850,50 @@ test('ascending section lock order avoids deadlock for opposing replacements', a
   }
 });
 
+test('concurrent final Remove and first Add serialize to one valid surviving placement', async () => {
+  const firstConnection = await client(OWNER_A);
+  const secondConnection = await client(OWNER_A);
+  try {
+    const removeFirst = await createFinalized(firstConnection, 'concurrent-remove-first');
+    await firstConnection.query('begin');
+    await secondConnection.query('begin');
+    await firstConnection.query('select public.remove_project_asset_from_section($1,$2,$3)',
+      ['aqal', removeFirst.id, 'materials']);
+    const waitingAdd = secondConnection.query(
+      'select public.add_project_asset_to_section($1,$2,$3)',
+      ['aqal', removeFirst.id, 'notes']);
+    await assertStillPending(waitingAdd, 'Add after final Remove');
+    await firstConnection.query('commit');
+    await waitingAdd;
+    await secondConnection.query('commit');
+    assert.equal((await admin.query('select section_id from public.project_resources where id=$1',
+      [removeFirst.id])).rows[0].section_id, 'notes');
+    assert.deepEqual((await admin.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1`, [removeFirst.id])).rows, [{ section_id: 'notes' }]);
+
+    const addFirst = await createFinalized(firstConnection, 'concurrent-add-first');
+    await firstConnection.query('begin');
+    await secondConnection.query('begin');
+    await firstConnection.query('select public.add_project_asset_to_section($1,$2,$3)',
+      ['aqal', addFirst.id, 'notes']);
+    const waitingRemove = secondConnection.query(
+      'select public.remove_project_asset_from_section($1,$2,$3)',
+      ['aqal', addFirst.id, 'materials']);
+    await assertStillPending(waitingRemove, 'final Remove after Add');
+    await firstConnection.query('commit');
+    await waitingRemove;
+    await secondConnection.query('commit');
+    assert.equal((await admin.query('select section_id from public.project_resources where id=$1',
+      [addFirst.id])).rows[0].section_id, 'notes');
+    assert.deepEqual((await admin.query(`select section_id from public.project_asset_section_placements
+      where asset_id=$1`, [addFirst.id])).rows, [{ section_id: 'notes' }]);
+  } finally {
+    await firstConnection.query('rollback').catch(() => undefined);
+    await secondConnection.query('rollback').catch(() => undefined);
+    await firstConnection.end(); await secondConnection.end();
+  }
+});
+
 test('placement operations touch recency once, failures never touch, and recency failure is secondary', async () => {
   await admin.query(`
     create table public.project_recency_audit(project_id text not null);
@@ -689,9 +917,9 @@ test('placement operations touch recency once, failures never touch, and recency
       ['aqal', asset.id, 'materials', 'notes']);
     assert.equal((await admin.query('select * from public.project_recency_audit')).rowCount, 1);
     await admin.query('truncate public.project_recency_audit');
-    await assert.rejects(owner.query('select public.remove_project_asset_from_section($1,$2,$3)',
-      ['aqal', asset.id, 'notes']), /remain in at least one section/i);
-    assert.equal((await admin.query('select * from public.project_recency_audit')).rowCount, 0);
+    await owner.query('select public.remove_project_asset_from_section($1,$2,$3)',
+      ['aqal', asset.id, 'notes']);
+    assert.equal((await admin.query('select * from public.project_recency_audit')).rowCount, 1);
 
     await admin.query(`create function public.fail_project_recency() returns trigger language plpgsql as $$
       begin raise exception 'recency unavailable'; end $$;
@@ -701,7 +929,7 @@ test('placement operations touch recency once, failures never touch, and recency
       ['aqal', asset.id, 'fallback-a']);
     assert.deepEqual((await owner.query(`select section_id from public.project_asset_section_placements
       where asset_id=$1 order by section_id`, [asset.id])).rows,
-    [{ section_id: 'fallback-a' }, { section_id: 'notes' }]);
+    [{ section_id: 'fallback-a' }]);
     await admin.query('drop trigger fail_project_recency on public.projects');
     await admin.query('drop function public.fail_project_recency()');
   } finally { await owner.end(); }
@@ -716,4 +944,7 @@ test('migration leaves Storage identity and authorization definitions placement-
   const stage2b = await readFile(path.join(ROOT, 'supabase', 'migrations', MULTI_PLACEMENT_MIGRATION), 'utf8');
   assert.doesNotMatch(stage2b, /storage\.objects|storage\.buckets|signed_url|object_id/i);
   assert.doesNotMatch(stage2b, /(?:insert|update|delete)[\s\S]{0,80}storage_path/i);
+  const stage2c = await readFile(path.join(ROOT, 'supabase', 'migrations', GLOBAL_ASSET_MIGRATION), 'utf8');
+  assert.doesNotMatch(stage2c, /(?:insert|update|delete)[\s\S]{0,80}storage_path/i);
+  assert.doesNotMatch(stage2c, /create policy|alter table storage\./i);
 });

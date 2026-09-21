@@ -21,27 +21,6 @@ export type ProjectAssetUploadIdentity = {
   objectId: string;
 };
 
-export const FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE =
-  'This material must remain in at least one active section for now.';
-
-export class ProjectAssetFinalPlacementError extends Error {
-  readonly code = 'final-active-placement';
-
-  constructor() {
-    super(FINAL_ACTIVE_PROJECT_ASSET_PLACEMENT_MESSAGE);
-    this.name = 'ProjectAssetFinalPlacementError';
-  }
-}
-
-export function isProjectAssetFinalPlacementError(
-  value: unknown,
-): value is ProjectAssetFinalPlacementError {
-  return value instanceof ProjectAssetFinalPlacementError || Boolean(
-    value && typeof value === 'object' &&
-    'code' in value && value.code === 'final-active-placement',
-  );
-}
-
 export type BeginProjectAssetUploadInput = ProjectAssetUploadIdentity & {
   byteSize: number;
   height?: number;
@@ -49,16 +28,23 @@ export type BeginProjectAssetUploadInput = ProjectAssetUploadIdentity & {
   originalFilename: string;
   picker: 'document-picker' | 'photo-library' | 'web-file-picker';
   projectId: string;
-  sectionId: string;
+  sectionId?: string;
   width?: number;
 };
 
 export type ProjectAssetUploadReservation = ProjectAssetUploadIdentity & {
   objectExists: boolean;
   projectId: string;
-  sectionId: string;
+  sectionId?: string;
   status: 'finalized' | 'pending';
   storagePath: string;
+};
+
+export type ProjectAssetUploadAttemptState = {
+  assetId: string;
+  projectId: string;
+  sectionId?: string;
+  status: 'cleaned' | 'finalized' | 'pending';
 };
 
 export type ProjectRepositoryChanges = {
@@ -94,6 +80,7 @@ export interface ProjectRepository {
     projectId: string,
     assetId: string,
   ): Promise<ProjectAssetSectionPlacement[]>;
+  listAssetUploadAttempts(projectId: string): Promise<ProjectAssetUploadAttemptState[]>;
   listDecisions(projectId: string, limit?: number): Promise<ProjectDecision[]>;
   listDeliverables(projectId: string): Promise<ProjectDeliverable[]>;
   listKnowledgeItems(projectId: string, limit?: number): Promise<ProjectKnowledgeItem[]>;
@@ -111,7 +98,7 @@ export interface ProjectRepository {
   listWorkSessionEntries(sessionId: string): Promise<ProjectWorkSessionEntry[]>;
   listWorkSessions(projectId: string, limit?: number): Promise<ProjectWorkSession[]>;
   markAssetUploadCleaned(attemptId: string): Promise<void>;
-  reconcileAssetUploads(projectId: string, sectionId: string): Promise<void>;
+  reconcileAssetUploads(projectId: string, sectionId?: string): Promise<void>;
   removeAssetPlacement(projectId: string, assetId: string, sectionId: string): Promise<ProjectAsset>;
   replaceAssetPlacement(
     projectId: string,

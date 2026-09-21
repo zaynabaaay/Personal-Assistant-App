@@ -16,6 +16,7 @@ const SECTION_MIGRATION = '20260826120000_create_project_sections.sql';
 const ASSET_MIGRATION = '20260826170000_add_project_assets.sql';
 const ASSET_PLACEMENT_MIGRATION = '20260903120000_add_project_asset_section_placements.sql';
 const ASSET_MULTI_PLACEMENT_MIGRATION = '20260908120000_add_project_asset_multi_placements.sql';
+const ASSET_GLOBAL_MIGRATION = '20260920120000_enable_project_global_assets.sql';
 const AT = '2026-08-26T16:00:00.000Z';
 
 let admin;
@@ -88,7 +89,7 @@ before(async () => {
   const migrations = (await readdir(migrationDir))
     .filter((name) => name.endsWith('.sql') && name !== SECTION_MIGRATION &&
       name !== ASSET_MIGRATION && name !== ASSET_PLACEMENT_MIGRATION &&
-      name !== ASSET_MULTI_PLACEMENT_MIGRATION)
+      name !== ASSET_MULTI_PLACEMENT_MIGRATION && name !== ASSET_GLOBAL_MIGRATION)
     .sort();
   for (const migration of migrations) {
     await admin.query(await readFile(path.join(migrationDir, migration), 'utf8'));

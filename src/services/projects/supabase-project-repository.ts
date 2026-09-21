@@ -20,11 +20,11 @@ import { getSupabaseClient } from '../auth/supabase-client';
 
 import type {
   BeginProjectAssetUploadInput,
+  ProjectAssetUploadAttemptState,
   ProjectAssetUploadReservation,
   ProjectRepository,
   ProjectRepositoryChanges,
 } from './project-repository';
-import { ProjectAssetFinalPlacementError } from './project-repository';
 
 type DatabaseRow = Record<string, unknown>;
 type ProjectTable =
@@ -416,7 +416,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
       p_byte_size: input.byteSize, p_height: input.height ?? null,
       p_mime_type: input.mimeType, p_object_id: input.objectId,
       p_original_filename: input.originalFilename, p_project_id: input.projectId,
-      p_section_id: input.sectionId, p_source_picker: input.picker,
+      p_section_id: input.sectionId ?? null, p_source_picker: input.picker,
       p_width: input.width ?? null,
     });
     if (error) throw error;
@@ -425,7 +425,8 @@ export class SupabaseProjectRepository implements ProjectRepository {
     return {
       assetId: requiredString(row, 'asset_id'), attemptId: requiredString(row, 'attempt_id'),
       objectExists: row.object_exists === true, objectId: requiredString(row, 'object_id'),
-      projectId: requiredString(row, 'project_id'), sectionId: requiredString(row, 'section_id'),
+      projectId: requiredString(row, 'project_id'),
+      ...optionalField('sectionId', optionalString(row.section_id)),
       status: requiredString(row, 'status') as ProjectAssetUploadReservation['status'],
       storagePath: requiredString(row, 'storage_path'),
     };
@@ -447,9 +448,9 @@ export class SupabaseProjectRepository implements ProjectRepository {
     if (error) throw error;
   }
 
-  async reconcileAssetUploads(projectId: string, sectionId: string) {
+  async reconcileAssetUploads(projectId: string, sectionId?: string) {
     const { error } = await this.getClient().rpc('reconcile_project_asset_uploads', {
-      p_project_id: projectId, p_section_id: sectionId,
+      p_project_id: projectId, p_section_id: sectionId ?? null,
     });
     if (error) throw error;
   }
@@ -458,7 +459,6 @@ export class SupabaseProjectRepository implements ProjectRepository {
     const { data, error } = await this.getClient().rpc('remove_project_asset_from_section', {
       p_asset_id: assetId, p_project_id: projectId, p_section_id: sectionId,
     });
-    if (error?.code === '23514') throw new ProjectAssetFinalPlacementError();
     if (error) throw error;
     if (!data) throw new Error('Supabase returned an invalid Project asset placement result.');
     return toResource(data as DatabaseRow) as ProjectAsset;
@@ -525,6 +525,20 @@ export class SupabaseProjectRepository implements ProjectRepository {
     if (error) throw error;
     return (data ?? []).map((row) => toAssetPlacement(row as DatabaseRow));
   }
+  async listAssetUploadAttempts(projectId: string): Promise<ProjectAssetUploadAttemptState[]> {
+    let query = this.getClient().from('project_asset_upload_attempts')
+      .select('asset_id,project_id,section_id,status')
+      .eq('project_id', projectId);
+    if (this.ownerId) query = query.eq('owner_id', this.ownerId);
+    const { data, error } = await query.order('created_at').order('attempt_id');
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      assetId: requiredString(row as DatabaseRow, 'asset_id'),
+      projectId: requiredString(row as DatabaseRow, 'project_id'),
+      ...optionalField('sectionId', optionalString((row as DatabaseRow).section_id)),
+      status: requiredString(row as DatabaseRow, 'status') as ProjectAssetUploadAttemptState['status'],
+    }));
+  }
   async listDecisions(id: string, limit?: number) { return this.list('project_decisions', 'project_id', id, toDecision, limit === undefined ? [] : ['updated_at', 'id'], limit, false); }
   async listDeliverables(id: string) { return this.list('project_deliverables', 'project_id', id, toDeliverable, ['position', 'id']); }
   async listKnowledgeItems(id: string, limit?: number) { return this.list('project_knowledge_items', 'project_id', id, toKnowledgeItem, limit === undefined ? [] : ['updated_at', 'id'], limit, false); }
@@ -580,7 +594,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
     if (value.resourceKind === 'uploaded_asset') {
       const { error } = await this.getClient().from('project_resources').update({
         description: value.description ?? null, name: value.name,
-        section_id: value.sectionId ?? null, status: value.status ?? 'current',
+        status: value.status ?? 'current',
         updated_at: value.updatedAt,
       }).eq('id', value.id);
       if (error) throw error;

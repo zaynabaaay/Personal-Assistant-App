@@ -187,7 +187,7 @@ export type ProjectAsset = ProjectResource & {
   byteSize: number;
   mimeType: string;
   originalFilename: string;
-  sectionId: ProjectEntityId;
+  sectionId?: ProjectEntityId;
   resourceKind: 'uploaded_asset';
   status: 'current' | 'archived';
   storagePath: string;

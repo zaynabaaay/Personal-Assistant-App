@@ -211,11 +211,15 @@ async function getProjectContext(
       statement: truncate(value.statement, 1_000) ?? value.statement,
     }));
     const boundedResources = resources.slice(0, LIMITS.resources);
+    const activeSectionIds = new Set(sections
+      .filter((section) => section.status === 'active')
+      .map((section) => section.id));
     const placementsByAsset = new Map(await Promise.all(boundedResources
       .filter((resource) => resource.resourceKind === 'uploaded_asset')
       .map(async (resource) => [
         resource.id,
-        await repository.listAssetPlacements(projectId, resource.id),
+        (await repository.listAssetPlacements(projectId, resource.id))
+          .filter((placement) => activeSectionIds.has(placement.sectionId)),
       ] as const)));
     result.resources = boundedResources.map((value) => {
       const placements = placementsByAsset.get(value.id);

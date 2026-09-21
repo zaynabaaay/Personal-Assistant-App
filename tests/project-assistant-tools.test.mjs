@@ -317,8 +317,9 @@ test('suggestive uploaded filename remains metadata, not evidence of document co
       assert.equal('summary' in toolResult.resources[0], false);
       assert.equal('sourceMetadata' in toolResult.resources[0], false);
       assert.match(request.instructions, /not evidence of the file contents/i);
-      assert.match(request.instructions, /placements list is the actual section membership/i);
-      assert.match(request.instructions, /Never treat a singular compatibility section as complete membership/i);
+      assert.match(request.instructions, /placements list is the actual active-section membership/i);
+      assert.match(request.instructions,
+        /Never infer current or historical membership from a singular compatibility section/i);
       return openAIResponse([{ content: [{ text: safeAnswer, type: 'output_text' }],
         type: 'message' }]);
     },
@@ -392,6 +393,48 @@ test('Tina asset placements use deterministic ordering and an explicit ten-secti
   assert.deepEqual(asset.placements.map(({ sectionId }) => sectionId),
     placementSections.slice(0, 10).map(({ id }) => id));
   assert.equal(asset.placementsTruncated, true);
+});
+
+test('Tina retains no archived-section relationship in active placement context', async () => {
+  const projectSeed = seed();
+  projectSeed.sections[0] = { ...projectSeed.sections[0], status: 'archived' };
+  const execute = executorFor({ [USER_ID]: projectSeed });
+  const output = await execute(
+    call('get_project_context', { focus: 'knowledge', projectId: PROJECT_ID }),
+    { accessToken: ACCESS_TOKEN, userId: USER_ID },
+  );
+  const asset = output.result.resources.find((resource) => resource.id === 'asset-1');
+
+  assert.deepEqual(asset.placements, []);
+  assert.equal(asset.placementsTruncated, false);
+  assert.equal('sectionStatus' in asset, false);
+});
+
+test('Tina placement truncation is computed after archived sections are filtered', async () => {
+  const projectSeed = seed();
+  const activeSections = Array.from({ length: 9 }, (_, index) => ({
+    createdAt: CREATED_AT, id: `active-${index}`, isDefault: false, position: index + 2,
+    projectId: PROJECT_ID, status: 'active', title: `Active ${index}`, updatedAt: UPDATED_AT,
+  }));
+  const archivedSections = Array.from({ length: 5 }, (_, index) => ({
+    createdAt: CREATED_AT, id: `archived-${index}`, isDefault: false, position: index + 20,
+    projectId: PROJECT_ID, status: 'archived', title: `Archived ${index}`, updatedAt: UPDATED_AT,
+  }));
+  projectSeed.sections = [...activeSections, ...archivedSections];
+  projectSeed.resources[1].sectionId = 'archived-0';
+  projectSeed.assetPlacements = [...archivedSections, ...activeSections].map((section) => ({
+    assetId: 'asset-1', createdAt: CREATED_AT, projectId: PROJECT_ID, sectionId: section.id,
+  })).reverse();
+  const execute = executorFor({ [USER_ID]: projectSeed });
+  const output = await execute(
+    call('get_project_context', { focus: 'knowledge', projectId: PROJECT_ID }),
+    { accessToken: ACCESS_TOKEN, userId: USER_ID },
+  );
+  const asset = output.result.resources.find((resource) => resource.id === 'asset-1');
+
+  assert.deepEqual(asset.placements.map(({ sectionId }) => sectionId),
+    activeSections.map(({ id }) => id));
+  assert.equal(asset.placementsTruncated, false);
 });
 
 test('a descriptive clothing-brand reference resolves one clear Project before answering', async () => {
