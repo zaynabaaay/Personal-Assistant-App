@@ -47,6 +47,32 @@ const seed = {
     updatedAt: NOW,
   }],
   projects,
+  resources: [{
+    byteSize: 5_965_831,
+    createdAt: NOW,
+    id: 'asset-img-1580',
+    mimeType: 'image/png',
+    name: 'IMG_1580.png',
+    originalFilename: 'IMG_1580.png',
+    projectId: AQAL_ID,
+    resourceKind: 'uploaded_asset',
+    role: 'reference',
+    sourceMetadata: { addedAt: NOW, kind: 'original-upload', picker: 'photo-library' },
+    status: 'current',
+    storagePath: 'owner-a/project-aqal/asset-img-1580/object-img-1580',
+    type: 'image',
+    updatedAt: NOW,
+  }],
+  sections: [{
+    createdAt: NOW,
+    id: 'programs',
+    isDefault: false,
+    position: 0,
+    projectId: AQAL_ID,
+    status: 'active',
+    title: 'Programs',
+    updatedAt: NOW,
+  }],
   tasks: [{
     createdAt: NOW,
     id: 'aqal-task',
@@ -116,9 +142,41 @@ test('ambiguous scoped work questions route to the selected Project with the sma
   assert.equal(routeScopedProjectRequest(body('What was I thinking about for this?')).focus, 'history');
 });
 
+test('clear Project asset-location questions route to knowledge without matching unrelated where questions', () => {
+  for (const question of [
+    'Where is IMG_1580',
+    'Where’s IMG_1580?',
+    'Where can I find IMG_1580?',
+    'Is IMG_1580 in Programs?',
+    'Does Programs contain IMG_1580?',
+    'Where is the uploaded file IMG_1580.png?',
+    'Which section is IMG_1580.png surfaced in?',
+    'What sections contain this uploaded photo?',
+    'Where did I put the project document?',
+    'Which Project section contains the document?',
+    'Is the uploaded image in Materials?',
+    'Where did we upload the presentation?',
+  ]) {
+    assert.equal(routeScopedProjectRequest(body(question))?.focus, 'knowledge', question);
+  }
+
+  for (const question of [
+    'Where is our next meeting?',
+    'Where should I focus today?',
+    'Which section of the proposal should we write next?',
+    'Which section of the document should we revise?',
+    'What section of the presentation needs a new conclusion?',
+    'Where is the presentation tomorrow?',
+  ]) {
+    assert.equal(routeScopedProjectRequest(body(question)), null, question);
+  }
+  assert.equal(routeScopedProjectRequest(body('Where is this project?'))?.focus, 'comprehensive');
+});
+
 test('explicit broader and unrelated intent escapes deterministic Project-default routing', () => {
   assert.equal(routeScopedProjectRequest(body('What other Projects do I have?')), null);
   assert.equal(routeScopedProjectRequest(body('What do I have going on overall?')), null);
+  assert.equal(routeScopedProjectRequest(body('Where is IMG_1580 across all Projects?')), null);
   assert.equal(routeScopedProjectRequest(body('What should I eat tonight?')), null);
 });
 
@@ -159,6 +217,41 @@ test('physical AQAL failure pattern preloads AQAL and makes global memory and Pr
     content: 'We are shaping AQAL Collective and its first public program.',
     status: 'completed',
   });
+});
+
+test('asset-location request deterministically preloads zero-placement Project resource context', async () => {
+  const executed = [];
+  let providerCalls = 0;
+  const response = await handleAssistantRequest(nativeRequest(body('Where is IMG_1580')), {
+    allowedOrigin: 'https://example.com',
+    apiKey: 'test-key',
+    executeServerTool: projectExecutor(executed),
+    fetchImplementation: async (_url, init) => {
+      providerCalls += 1;
+      const requestBody = JSON.parse(String(init.body));
+      const output = requestBody.input.find((item) =>
+        item.type === 'function_call_output' && item.call_id === 'scoped-project-context');
+      const context = JSON.parse(output.output);
+      const asset = context.resources.find(({ id }) => id === 'asset-img-1580');
+      assert.equal(asset.name, 'IMG_1580.png');
+      assert.equal(asset.originalFilename, 'IMG_1580.png');
+      assert.deepEqual(asset.placements, []);
+      assert.equal(asset.placementsTruncated, false);
+      assert.equal('sectionId' in asset, false);
+      assert.equal('storagePath' in asset, false);
+      return new Response(JSON.stringify({ output: [{
+        content: [{ text: 'IMG_1580.png exists but is not surfaced in an active section.', type: 'output_text' }],
+        type: 'message',
+      }] }), { headers: { 'Content-Type': 'application/json' } });
+    },
+    verifyAccessToken: async () => ({ id: 'owner-a' }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(providerCalls, 1);
+  assert.deepEqual(executed.map((call) => [call.name, call.arguments.projectId, call.arguments.focus]), [
+    ['get_project_context', AQAL_ID, 'knowledge'],
+  ]);
 });
 
 test('explicit broader and unrelated questions retain the normal global tool set', async () => {

@@ -187,7 +187,9 @@ test('Project UI uses persisted ordered sections without changing Tina or work-s
   assert.match(screen, /testID="manage-project-sections"/);
   assert.match(manager, /archiveSection|restoreSection|reorderSections|renameSection|addSection/);
   assert.doesNotMatch(manager, /Decision|Question|Task|resource|work session/i);
-  assert.doesNotMatch(routing, /section/i);
+  assert.match(routing, /asksForAssetLocation/);
+  assert.match(routing, /focus: 'knowledge'/);
+  assert.doesNotMatch(routing, /addAssetPlacement|removeAssetPlacement|replaceAssetPlacement/);
   assert.doesNotMatch(chat, /section/i);
   assert.match(screen, /projectId: project\.id/);
   assert.match(screen, /projectName: project\.name/);

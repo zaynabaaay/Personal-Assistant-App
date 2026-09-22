@@ -775,7 +775,9 @@ test('asset UI stays section-scoped and preserves Project Tina and New Chat beha
   assert.match(surface, /WebBrowser\.openBrowserAsync/);
   assert.match(picker, /createProjectDocumentPicker/);
   assert.match(client, /readNativeFile: \(uri\) => new File\(uri\)\.arrayBuffer\(\)/);
-  assert.doesNotMatch(routing, /section/i);
+  assert.match(routing, /asksForAssetLocation/);
+  assert.match(routing, /focus: 'knowledge'/);
+  assert.doesNotMatch(routing, /addAssetPlacement|removeAssetPlacement|replaceAssetPlacement/);
   assert.doesNotMatch(chat, /section/i);
   assert.match(screen, /projectChatService\.startNewSession\(session\)/);
 });
