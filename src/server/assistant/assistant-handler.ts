@@ -1,0 +1,488 @@
+import {
+  ASSISTANT_CLIENT_HEADER,
+  ASSISTANT_CLIENT_ID,
+  isAssistantToolOutput,
+  MAX_ASSISTANT_TOOL_STEPS,
+} from '../../contracts/assistant';
+import type {
+  AssistantErrorCode,
+  AssistantToolCall,
+  AssistantToolOutput,
+  AssistantToolStep,
+} from '../../contracts/assistant';
+import {
+  OpenAIAssistantProviderError,
+  requestOpenAIAssistant,
+} from './openai-assistant-provider';
+import {
+  ASSISTANT_REQUEST_LIMITS,
+  parseAssistantJsonBody,
+} from './request-validation';
+import {
+  executeAssistantServerTool,
+  type AssistantServerToolExecutor,
+} from './server-tool-executor';
+import type { AccessTokenVerifier } from '../auth/authenticated-user';
+import {
+  createSupabaseAccessTokenVerifier,
+  InvalidAccessTokenError,
+  SupabaseAuthUnavailableError,
+} from '../auth/supabase-token-verifier';
+import {
+  PROJECT_DEFAULT_DISABLED_TOOLS,
+  routeScopedProjectRequest,
+} from './project-scope-routing';
+
+declare const process: {
+  env: Record<string, string | undefined>;
+};
+
+const DEFAULT_MODEL = 'gpt-5.4-mini';
+const defaultVerifyAccessToken = createSupabaseAccessTokenVerifier();
+
+export type AssistantHandlerOptions = {
+  allowedOrigin?: string;
+  apiKey?: string;
+  executeServerTool?: AssistantServerToolExecutor;
+  fetchImplementation?: typeof fetch;
+  logMemoryRouting?: (metadata: MemoryRoutingMetadata) => void;
+  model?: string;
+  verifyAccessToken?: AccessTokenVerifier;
+};
+
+export type MemoryRoutingMetadata = {
+  failureReason?: 'history_fallback_empty' | 'memory_empty_without_history' |
+    'recall_tool_error' | 'request_failed';
+  historyFallbackRan: boolean;
+  tools: {
+    layer?: 'any' | 'current_state' | 'durable';
+    query: {
+      characters: number;
+      fingerprint: string;
+      tokens: number;
+      truncated: boolean;
+    };
+    resultCount?: number;
+    status: 'error' | 'success';
+    tool: 'search_completed_conversations' | 'search_general_memory';
+    useful?: boolean;
+  }[];
+};
+
+function safeQueryDiagnostic(value: string) {
+  const normalized = value.normalize('NFKC').toLocaleLowerCase('en-US')
+    .trim().replace(/\s+/g, ' ');
+  const bounded = normalized.slice(0, 500);
+  let fingerprint = 0x811c9dc5;
+  for (let index = 0; index < bounded.length; index += 1) {
+    fingerprint ^= bounded.charCodeAt(index);
+    fingerprint = Math.imul(fingerprint, 0x01000193);
+  }
+  return {
+    characters: bounded.length,
+    fingerprint: (fingerprint >>> 0).toString(16).padStart(8, '0'),
+    tokens: bounded ? bounded.split(/\s+/).length : 0,
+    truncated: normalized.length > bounded.length,
+  };
+}
+
+function recordRecallRouting(
+  metadata: MemoryRoutingMetadata,
+  call: AssistantToolCall,
+  output: AssistantToolOutput,
+) {
+  if (call.name !== 'search_general_memory' &&
+    call.name !== 'search_completed_conversations') return;
+  const result = output.result as Record<string, unknown>;
+  const status = result.status === 'success' ? 'success' : 'error';
+  const resultCount = call.name === 'search_general_memory' && Array.isArray(result.memories)
+    ? result.memories.length
+    : call.name === 'search_completed_conversations' && Array.isArray(result.matches)
+      ? result.matches.length
+      : undefined;
+  const earlierMemoryWasInsufficient = metadata.tools.some((tool) =>
+    tool.tool === 'search_general_memory' &&
+    (tool.status === 'error' || tool.useful === false || tool.resultCount === 0));
+  if (call.name === 'search_completed_conversations' && earlierMemoryWasInsufficient) {
+    metadata.historyFallbackRan = true;
+  }
+  const recallArguments = call.arguments as {
+    layer?: 'any' | 'current_state' | 'durable';
+    query: string;
+  };
+  metadata.tools.push({
+    ...(call.name === 'search_general_memory' ? { layer: recallArguments.layer } : {}),
+    query: safeQueryDiagnostic(recallArguments.query),
+    ...(resultCount === undefined ? {} : { resultCount }),
+    status,
+    tool: call.name,
+    ...(call.name === 'search_general_memory' && typeof result.useful === 'boolean'
+      ? { useful: result.useful }
+      : {}),
+  });
+}
+
+function finalizeRecallRouting(
+  metadata: MemoryRoutingMetadata,
+  requestFailed = false,
+) {
+  const memory = metadata.tools.filter((tool) => tool.tool === 'search_general_memory');
+  const history = metadata.tools.filter((tool) => tool.tool === 'search_completed_conversations');
+  if (requestFailed) metadata.failureReason = 'request_failed';
+  else if (metadata.tools.some((tool) => tool.status === 'error')) {
+    metadata.failureReason = 'recall_tool_error';
+  } else if (memory.some((tool) => tool.useful === false || tool.resultCount === 0) &&
+    history.length === 0) {
+    metadata.failureReason = 'memory_empty_without_history';
+  } else if (metadata.historyFallbackRan && history.every((tool) => tool.resultCount === 0)) {
+    metadata.failureReason = 'history_fallback_empty';
+  }
+  return metadata;
+}
+
+export { ASSISTANT_REQUEST_LIMITS };
+
+function securityHeaders() {
+  return {
+    'Cache-Control': 'no-store',
+    'Content-Type': 'application/json',
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+  };
+}
+
+function corsHeaders(origin: string) {
+  return {
+    ...securityHeaders(),
+    'Access-Control-Allow-Headers': `Authorization, Content-Type, ${ASSISTANT_CLIENT_HEADER}`,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Max-Age': '86400',
+    Vary: 'Origin',
+  };
+}
+
+function jsonResponse(body: unknown, status: number, origin?: string) {
+  return new Response(JSON.stringify(body), {
+    headers: origin ? corsHeaders(origin) : securityHeaders(),
+    status,
+  });
+}
+
+function errorResponse(
+  code: AssistantErrorCode,
+  error: string,
+  status: number,
+  origin?: string,
+) {
+  return jsonResponse({ code, error }, status, origin);
+}
+
+function normalizeOrigin(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value.trim()).origin;
+  } catch {
+    return null;
+  }
+}
+
+function outputMatchesCall(
+  output: AssistantToolOutput,
+  call: AssistantToolCall,
+) {
+  return (
+    output.callId === call.callId &&
+    output.execution === call.execution &&
+    output.name === call.name
+  );
+}
+
+async function executeServerCalls(
+  calls: readonly AssistantToolCall[],
+  executor: AssistantServerToolExecutor,
+  accessToken: string,
+  userId: string,
+) {
+  const outputs: AssistantToolOutput[] = [];
+
+  // Keep writes deterministic and allow duplicate checks to observe any earlier
+  // write from the same model step.
+  for (const call of calls) {
+    outputs.push(await executor(call, { accessToken, userId }));
+  }
+
+  if (
+    !outputs.every(isAssistantToolOutput) ||
+    !outputs.every((output, index) => outputMatchesCall(output, calls[index]))
+  ) {
+    throw new Error('A server assistant tool returned an invalid output.');
+  }
+
+  return outputs;
+}
+
+function getBearerToken(request: Request) {
+  const authorization = request.headers.get('Authorization');
+
+  if (!authorization) {
+    return null;
+  }
+
+  const match = /^Bearer ([^\s]+)$/.exec(authorization);
+  return match?.[1] ?? null;
+}
+
+export async function handleAssistantRequest(
+  request: Request,
+  options: AssistantHandlerOptions = {},
+) {
+  const allowedOrigin = normalizeOrigin(options.allowedOrigin ?? process.env.ALLOWED_ORIGIN);
+  const rawRequestOrigin = request.headers.get('Origin');
+  const requestOrigin = normalizeOrigin(rawRequestOrigin);
+
+  if (!allowedOrigin) {
+    return errorResponse('assistant_unavailable', 'The assistant is unavailable.', 500);
+  }
+
+  const isAllowedBrowserRequest = requestOrigin === allowedOrigin;
+  const isAllowedNativeRequest =
+    rawRequestOrigin === null &&
+    request.headers.get(ASSISTANT_CLIENT_HEADER) === ASSISTANT_CLIENT_ID;
+
+  if (!isAllowedBrowserRequest && !isAllowedNativeRequest) {
+    return errorResponse('invalid_request', 'The assistant request was rejected.', 403);
+  }
+
+  const responseOrigin = isAllowedBrowserRequest ? allowedOrigin : undefined;
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders(allowedOrigin), status: 204 });
+  }
+
+  if (request.method !== 'POST') {
+    return errorResponse(
+      'invalid_request',
+      'The assistant request was rejected.',
+      405,
+      responseOrigin,
+    );
+  }
+
+  const accessToken = getBearerToken(request);
+
+  if (!accessToken) {
+    return errorResponse(
+      'authentication_required',
+      'Authentication is required.',
+      401,
+      responseOrigin,
+    );
+  }
+
+  let authenticatedUser;
+
+  try {
+    authenticatedUser = await (
+      options.verifyAccessToken ?? defaultVerifyAccessToken
+    )(accessToken);
+  } catch (error) {
+    if (error instanceof SupabaseAuthUnavailableError) {
+      console.error('Supabase authentication is not configured.');
+      return errorResponse(
+        'assistant_unavailable',
+        'The assistant is unavailable.',
+        500,
+        responseOrigin,
+      );
+    }
+
+    if (!(error instanceof InvalidAccessTokenError)) {
+      console.error('Supabase access-token verification failed.');
+    }
+
+    return errorResponse(
+      'authentication_required',
+      'Authentication is required.',
+      401,
+      responseOrigin,
+    );
+  }
+
+  const parsedBody = await parseAssistantJsonBody(request);
+
+  if (parsedBody.status !== 'success') {
+    return parsedBody.status === 'too_large'
+      ? errorResponse(
+          'request_too_large',
+          'The assistant request is too large.',
+          413,
+          responseOrigin,
+        )
+      : errorResponse(
+          'invalid_request',
+          'The assistant request was invalid.',
+          400,
+          responseOrigin,
+        );
+  }
+
+  const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    return errorResponse(
+      'assistant_unavailable',
+      'The assistant is unavailable.',
+      500,
+      responseOrigin,
+    );
+  }
+
+  const body = parsedBody.body;
+  const scopedProjectRoute = routeScopedProjectRequest(body);
+  const steps: AssistantToolStep[] = [...(body.toolContinuation?.steps ?? [])];
+  const completedServerSteps: AssistantToolStep[] = [];
+  const executeServerTool = options.executeServerTool ?? executeAssistantServerTool;
+  const recallRouting: MemoryRoutingMetadata = { historyFallbackRan: false, tools: [] };
+  const logMemoryRouting = options.logMemoryRouting ?? ((metadata: MemoryRoutingMetadata) => {
+    console.info('Assistant memory-recall routing.', metadata);
+  });
+
+  try {
+    const scopedContextCallId = 'scoped-project-context';
+    const hasScopedContext = steps.some((step) =>
+      step.calls.some((call) => call.callId === scopedContextCallId));
+    if (scopedProjectRoute && body.projectScope && !hasScopedContext) {
+      const scopedCall: AssistantToolCall = {
+        arguments: {
+          focus: scopedProjectRoute.focus,
+          projectId: body.projectScope.projectId,
+        },
+        callId: scopedContextCallId,
+        execution: 'server',
+        name: 'get_project_context',
+      };
+      const scopedOutputs = await executeServerCalls(
+        [scopedCall],
+        executeServerTool,
+        accessToken,
+        authenticatedUser.id,
+      );
+      const scopedResult = scopedOutputs[0].result as {
+        project?: { id?: unknown; name?: unknown };
+        status?: unknown;
+      };
+      if (
+        scopedResult.status !== 'success' ||
+        scopedResult.project?.id !== body.projectScope.projectId ||
+        scopedResult.project?.name !== body.projectScope.projectName
+      ) {
+        return errorResponse(
+          'invalid_request',
+          'The selected Project could not be verified.',
+          400,
+          responseOrigin,
+        );
+      }
+      const scopedStep = { calls: [scopedCall], outputs: scopedOutputs };
+      steps.unshift(scopedStep);
+      completedServerSteps.push(scopedStep);
+    }
+
+    while (true) {
+      const modelResult = await requestOpenAIAssistant(body, steps, {
+        apiKey,
+        ...(scopedProjectRoute
+          ? { disabledToolNames: PROJECT_DEFAULT_DISABLED_TOOLS }
+          : {}),
+        fetchImplementation: options.fetchImplementation ?? fetch,
+        model: options.model ?? DEFAULT_MODEL,
+        signal: request.signal,
+      });
+
+      if (modelResult.status === 'completed') {
+        logMemoryRouting(finalizeRecallRouting(recallRouting));
+        return jsonResponse(
+          { content: modelResult.content, status: 'completed' },
+          200,
+          responseOrigin,
+        );
+      }
+
+      if (steps.length >= MAX_ASSISTANT_TOOL_STEPS) {
+        console.error('Assistant tool loop reached its configured step limit.');
+        return errorResponse(
+          'assistant_unavailable',
+          'The assistant could not respond.',
+          502,
+          responseOrigin,
+        );
+      }
+
+      const serverCalls = modelResult.toolCalls.filter(
+        (call) => call.execution === 'server',
+      );
+      const clientCalls = modelResult.toolCalls.filter(
+        (call) => call.execution === 'client',
+      );
+      const serverOutputs = await executeServerCalls(
+        serverCalls,
+        executeServerTool,
+        accessToken,
+        authenticatedUser.id,
+      );
+      serverCalls.forEach((call, index) => {
+        recordRecallRouting(recallRouting, call, serverOutputs[index]);
+      });
+      const step: AssistantToolStep = {
+        calls: modelResult.toolCalls,
+        outputs: serverOutputs,
+      };
+
+      if (clientCalls.length > 0) {
+        return jsonResponse(
+          {
+            completedToolSteps: completedServerSteps,
+            pendingToolStep: step,
+            status: 'requires_client_tools',
+          },
+          200,
+          responseOrigin,
+        );
+      }
+
+      steps.push(step);
+      completedServerSteps.push(step);
+    }
+  } catch (error) {
+    logMemoryRouting(finalizeRecallRouting(recallRouting, true));
+    if (request.signal.aborted) {
+      return errorResponse(
+        'assistant_unavailable',
+        'The assistant request was cancelled.',
+        499,
+        responseOrigin,
+      );
+    }
+
+    if (error instanceof OpenAIAssistantProviderError) {
+      console.error('OpenAI request failed.', {
+        message: error.message,
+        requestId: error.requestId,
+        status: error.status,
+      });
+    } else {
+      console.error('Assistant server request failed.', error);
+    }
+
+    return errorResponse(
+      'assistant_unavailable',
+      'The assistant could not respond.',
+      502,
+      responseOrigin,
+    );
+  }
+}

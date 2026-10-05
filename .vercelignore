@@ -1,0 +1,11 @@
+node_modules/
+node_modules.broken/
+.git/
+dist/
+.npm-cache/
+.expo/
+ios/
+android/
+*.log
+.env
+.env.*
