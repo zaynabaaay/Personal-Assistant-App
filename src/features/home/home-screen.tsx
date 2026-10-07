@@ -49,7 +49,7 @@ type ConversationProps = {
   messages: ConversationMessage[];
 };
 
-const TINA_ACCENT = '#8AB4F8';
+const TINA_ACCENT = '#285A91';
 const KEYBOARD_AVOIDING_BEHAVIOR =
   Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined;
 function HomeHeader({
@@ -491,7 +491,7 @@ export default function HomeScreen() {
       ]}
       testID="home-screen"
     >
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <KeyboardAvoidingView
         behavior={KEYBOARD_AVOIDING_BEHAVIOR}
         keyboardVerticalOffset={0}
@@ -572,7 +572,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: '#050505', flex: 1 },
+  safeArea: { backgroundColor: '#EAF4FF', flex: 1 },
   safeAreaWeb: {
     left: 0,
     overflow: 'hidden',
@@ -591,9 +591,9 @@ const styles = StyleSheet.create({
   },
   headerIconButton: { alignItems: 'center', height: 44, justifyContent: 'center', width: 44 },
   menuIcon: { gap: 6, width: 20 },
-  menuLine: { backgroundColor: '#E8E8EA', borderRadius: 1, height: 1.5, width: 20 },
+  menuLine: { backgroundColor: '#25364A', borderRadius: 1, height: 1.5, width: 20 },
   menuLineShort: { width: 14 },
-  headerTitle: { color: '#F7F7F8', fontSize: 17, fontWeight: '600', letterSpacing: -0.2 },
+  headerTitle: { color: '#25364A', fontSize: 17, fontWeight: '600', letterSpacing: -0.2 },
   newChatButton: {
     alignItems: 'flex-end',
     justifyContent: 'center',
@@ -603,11 +603,11 @@ const styles = StyleSheet.create({
   },
   newChatText: { color: TINA_ACCENT, fontSize: 13, fontWeight: '600' },
   newChatTextDisabled: { color: '#55555A' },
-  finishError: { color: '#E39A8E', fontSize: 12, marginHorizontal: 22, marginTop: 12 },
-  completionNotice: { color: '#8F9A88', fontSize: 12, marginHorizontal: 22, marginTop: 12 },
+  finishError: { color: '#A43D32', fontSize: 12, marginHorizontal: 22, marginTop: 12 },
+  completionNotice: { color: '#45633E', fontSize: 12, marginHorizontal: 22, marginTop: 12 },
   persistenceNotice: { alignItems: 'flex-start' },
   retryText: {
-    color: '#B8B8BC',
+    color: '#43566C',
     fontSize: 12,
     fontWeight: '600',
     marginHorizontal: 22,
@@ -633,7 +633,7 @@ const styles = StyleSheet.create({
   userMessageText: { color: '#F4F4F5', fontSize: 16, lineHeight: 23 },
   assistantMessage: { alignSelf: 'flex-start', marginTop: 25, maxWidth: '94%' },
   assistantMessageText: {
-    color: '#F4F4F5',
+    color: '#25364A',
     fontSize: 17,
     letterSpacing: -0.1,
     lineHeight: 27,

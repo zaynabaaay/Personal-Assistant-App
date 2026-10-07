@@ -11,7 +11,7 @@ export default function AuthLoadingScreen() {
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    backgroundColor: '#F5F4F0',
+    backgroundColor: '#EAF4FF',
     flex: 1,
     justifyContent: 'center',
   },

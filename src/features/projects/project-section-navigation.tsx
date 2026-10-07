@@ -48,7 +48,7 @@ const styles = StyleSheet.create({
     marginRight: 22,
     minHeight: 44,
   },
-  itemSelected: { borderBottomColor: '#D9D9DC' },
+  itemSelected: { borderBottomColor: '#285A91' },
   text: { color: '#69696F', fontSize: 14, fontWeight: '500' },
-  textSelected: { color: '#E9E9EB' },
+  textSelected: { color: '#25364A' },
 });

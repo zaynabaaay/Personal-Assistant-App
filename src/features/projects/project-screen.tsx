@@ -286,7 +286,7 @@ export default function ProjectScreen() {
 
   return (
     <SafeAreaView style={[styles.safeArea, visibleViewport && styles.safeAreaWeb, visibleViewport && { height: visibleViewport.height, top: visibleViewport.top }]} testID="project-screen">
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <KeyboardAvoidingView behavior={KEYBOARD_AVOIDING_BEHAVIOR} keyboardVerticalOffset={0} style={styles.keyboardView} testID="project-keyboard-layout">
         <View style={styles.workspace}>
           <ScrollView contentContainerStyle={[styles.workspaceContent, tinaOpen && styles.workspaceContentWithTina]} showsVerticalScrollIndicator={false} testID="project-home-scroll">
@@ -364,7 +364,7 @@ export default function ProjectScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: '#050505', flex: 1 },
+  safeArea: { backgroundColor: '#EAF4FF', flex: 1 },
   safeAreaWeb: { left: 0, overflow: 'hidden', position: 'absolute', right: 0 },
   keyboardView: { flex: 1, position: 'relative' },
   workspace: { flex: 1, position: 'relative' },
@@ -372,21 +372,21 @@ const styles = StyleSheet.create({
   workspaceContentWithTina: { paddingBottom: 460 },
   topBar: { alignItems: 'center', flexDirection: 'row', minHeight: 52, paddingHorizontal: 8 },
   headerButton: { alignItems: 'center', height: 44, justifyContent: 'center', width: 44 },
-  back: { color: '#E5E5E7', fontSize: 35, fontWeight: '200', lineHeight: 37 },
+  back: { color: '#25364A', fontSize: 35, fontWeight: '200', lineHeight: 37 },
   projectsLabel: { color: '#77777D', flex: 1, fontSize: 13, fontWeight: '500' },
-  more: { color: '#C8C8CC', fontSize: 16, letterSpacing: 1 },
+  more: { color: '#43566C', fontSize: 16, letterSpacing: 1 },
   identity: { paddingBottom: 4 },
   coverFallback: { backgroundColor: '#101011', borderColor: '#1B1B1D', borderRadius: 3, borderWidth: StyleSheet.hairlineWidth, height: 112, marginHorizontal: 20, overflow: 'hidden', position: 'relative' },
   coverPlane: { backgroundColor: '#151516', bottom: -38, height: 94, left: '28%', position: 'absolute', right: -24, transform: [{ rotate: '-4deg' }] },
   coverRulePrimary: { backgroundColor: '#2A2A2C', height: StyleSheet.hairlineWidth, left: 18, opacity: 0.72, position: 'absolute', right: 48, top: 34 },
   coverRuleSecondary: { backgroundColor: '#202022', bottom: 25, height: StyleSheet.hairlineWidth, left: 48, opacity: 0.9, position: 'absolute', right: 18 },
   identityCopy: { paddingBottom: 20, paddingHorizontal: 20, paddingTop: 20 },
-  projectName: { color: '#F5F5F7', fontSize: 30, fontWeight: '600', letterSpacing: -0.8, lineHeight: 35 },
-  projectDescription: { color: '#929298', fontSize: 15, lineHeight: 21, marginTop: 8, maxWidth: 560 },
+  projectName: { color: '#25364A', fontSize: 30, fontWeight: '600', letterSpacing: -0.8, lineHeight: 35 },
+  projectDescription: { color: '#43566C', fontSize: 15, lineHeight: 21, marginTop: 8, maxWidth: 560 },
   overview: { alignItems: 'center', minHeight: 220, paddingBottom: 48, paddingHorizontal: 20, paddingTop: 28 },
   overviewContent: { maxWidth: 640, width: '100%' },
   overviewLabel: { color: '#6F6F75', fontSize: 11, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' },
-  overviewText: { color: '#C7C7CB', fontSize: 16, lineHeight: 24, marginTop: 10, maxWidth: 560 },
+  overviewText: { color: '#43566C', fontSize: 16, lineHeight: 24, marginTop: 10, maxWidth: 560 },
   overviewEmpty: { color: '#68686E', fontSize: 14, lineHeight: 21, maxWidth: 360 },
   customSectionSurface: { minHeight: 300 },
   tinaPanel: { backgroundColor: '#0C0C0E', borderColor: '#29292D', borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, bottom: 10, overflow: 'hidden', position: 'absolute', right: 12 },

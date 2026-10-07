@@ -29,7 +29,7 @@ export default function ShellLayout() {
         headerShown: false,
         lazy: false,
         sceneStyle: styles.scene,
-        tabBarActiveTintColor: '#F2F2F4',
+        tabBarActiveTintColor: '#25364A',
         tabBarHideOnKeyboard: true,
         tabBarInactiveTintColor: '#66666C',
         tabBarItemStyle: styles.tabBarItem,
@@ -60,10 +60,10 @@ export default function ShellLayout() {
 }
 
 const styles = StyleSheet.create({
-  scene: { backgroundColor: '#050505' },
+  scene: { backgroundColor: '#EAF4FF' },
   tabBar: {
-    backgroundColor: '#09090A',
-    borderTopColor: '#202023',
+    backgroundColor: '#EAF4FF',
+    borderTopColor: '#C8DAEC',
     borderTopWidth: StyleSheet.hairlineWidth,
     elevation: 0,
   },
@@ -77,14 +77,14 @@ const styles = StyleSheet.create({
     borderBottomColor: '#66666C', borderBottomWidth: 1.5, height: 6,
     left: 4, position: 'absolute', top: 13, transform: [{ rotate: '-35deg' }], width: 6,
   },
-  iconFocused: { borderColor: '#F2F2F4' },
-  tailFocused: { borderBottomColor: '#F2F2F4' },
+  iconFocused: { borderColor: '#25364A' },
+  tailFocused: { borderBottomColor: '#25364A' },
   projectsIcon: {
     borderColor: '#66666C', borderRadius: 4, borderWidth: 1.5,
     height: 19, justifyContent: 'center', paddingHorizontal: 4, width: 21,
   },
-  projectsIconFocused: { borderColor: '#F2F2F4' },
+  projectsIconFocused: { borderColor: '#25364A' },
   projectLine: { backgroundColor: '#66666C', borderRadius: 1, height: 1.5, width: 11 },
-  projectLineFocused: { backgroundColor: '#F2F2F4' },
+  projectLineFocused: { backgroundColor: '#25364A' },
   projectLineShort: { marginTop: 4, width: 7 },
 });

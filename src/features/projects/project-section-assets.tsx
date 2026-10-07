@@ -346,7 +346,7 @@ export function ProjectSectionAssets({ onError, projectId, section, sections }: 
 const styles = StyleSheet.create({
   surface: { borderTopColor: '#18181B', borderTopWidth: StyleSheet.hairlineWidth, marginHorizontal: 20, minHeight: 260, paddingBottom: 42, paddingTop: 24 },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  heading: { color: '#EDEDEF', fontSize: 18, fontWeight: '600' },
+  heading: { color: '#25364A', fontSize: 18, fontWeight: '600' },
   subheading: { color: '#717177', fontSize: 12, marginTop: 4 },
   add: { backgroundColor: '#1A2331', borderRadius: 16, minHeight: 34, justifyContent: 'center', paddingHorizontal: 13 },
   addText: { color: '#AFC6E8', fontSize: 13, fontWeight: '600' },

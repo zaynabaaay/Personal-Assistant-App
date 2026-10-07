@@ -4,10 +4,10 @@ import test from 'node:test';
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
-test('Home is a minimal dark conversation shell without the dashboard clock', async () => {
+test('Home is a minimal pale-blue conversation shell without the dashboard clock', async () => {
   const home = await read('../src/features/home/home-screen.tsx');
-  assert.match(home, /backgroundColor: '#050505'/);
-  assert.match(home, /<StatusBar style="light"/);
+  assert.match(home, /backgroundColor: '#EAF4FF'/);
+  assert.match(home, /<StatusBar style="dark"/);
   assert.match(home, /<Text style=\{styles\.headerTitle\}>Tina<\/Text>/);
   assert.doesNotMatch(home, /TIME_FORMATTER|DATE_FORMATTER|useCurrentDate|styles\.time|styles\.date/);
 });
@@ -106,6 +106,6 @@ test('keyboard, safe-area, active restoration, and Chats routes remain wired', a
   assert.match(composer, /keyboardAppearance="dark"/);
   assert.match(chats, /<ChatsList/);
   assert.match(detail, /record\.conversation\.title/);
-  assert.match(chats, /backgroundColor: '#050505'/);
-  assert.match(detail, /backgroundColor: '#050505'/);
+  assert.match(chats, /backgroundColor: '#EAF4FF'/);
+  assert.match(detail, /backgroundColor: '#EAF4FF'/);
 });

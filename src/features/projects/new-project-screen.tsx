@@ -51,7 +51,7 @@ export default function NewProjectScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} testID="new-project-screen">
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} style={styles.headerButton}>
@@ -98,19 +98,19 @@ export default function NewProjectScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: '#050505', flex: 1 },
+  safeArea: { backgroundColor: '#EAF4FF', flex: 1 },
   flex: { flex: 1 },
   header: { alignItems: 'center', borderBottomColor: '#171719', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: 54, paddingHorizontal: 12 },
   headerButton: { justifyContent: 'center', minHeight: 44, minWidth: 66 },
-  cancel: { color: '#9A9AA0', fontSize: 15 },
-  title: { color: '#F5F5F7', fontSize: 17, fontWeight: '600' },
-  create: { color: '#8AB4F8', fontSize: 15, fontWeight: '600', textAlign: 'right' },
+  cancel: { color: '#43566C', fontSize: 15 },
+  title: { color: '#25364A', fontSize: 17, fontWeight: '600' },
+  create: { color: '#285A91', fontSize: 15, fontWeight: '600', textAlign: 'right' },
   disabled: { color: '#444449' },
   form: { padding: 22 },
-  label: { color: '#A1A1A7', fontSize: 13, fontWeight: '500', marginBottom: 8 },
+  label: { color: '#43566C', fontSize: 13, fontWeight: '500', marginBottom: 8 },
   descriptionLabel: { marginTop: 22 },
   input: { backgroundColor: '#111113', borderColor: '#29292D', borderRadius: 13, borderWidth: StyleSheet.hairlineWidth, color: '#F4F4F6', fontSize: 16, minHeight: 50, paddingHorizontal: 15, paddingVertical: 13 },
   descriptionInput: { lineHeight: 21, minHeight: 100, textAlignVertical: 'top' },
   hint: { color: '#6F6F75', fontSize: 13, lineHeight: 19, marginTop: 14 },
-  error: { color: '#E39A8E', fontSize: 13, marginTop: 16 },
+  error: { color: '#A43D32', fontSize: 13, marginTop: 16 },
 });

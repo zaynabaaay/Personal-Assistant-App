@@ -99,7 +99,7 @@ export default function ProjectsScreen() {
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea} testID="projects-screen">
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <View style={styles.header}>
         <View style={styles.titleBlock}>
           <Text style={styles.title}>Projects</Text>
@@ -142,13 +142,13 @@ export default function ProjectsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: '#050505', flex: 1 },
+  safeArea: { backgroundColor: '#EAF4FF', flex: 1 },
   header: { alignItems: 'center', borderBottomColor: '#171719', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', minHeight: 64, paddingHorizontal: 18 },
   titleBlock: { flex: 1, minWidth: 0 },
-  title: { color: '#F7F7F8', fontSize: 24, fontWeight: '600', letterSpacing: -0.6 },
+  title: { color: '#25364A', fontSize: 24, fontWeight: '600', letterSpacing: -0.6 },
   subtitle: { color: '#6F6F75', fontSize: 12, marginTop: 2 },
   newButton: { alignItems: 'center', justifyContent: 'center', minHeight: 44, minWidth: 64 },
-  newButtonText: { color: '#8AB4F8', fontSize: 14, fontWeight: '600' },
+  newButtonText: { color: '#285A91', fontSize: 14, fontWeight: '600' },
   controls: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 13 },
   sortLabel: { color: '#77777D', fontSize: 12 },
   sortControl: { backgroundColor: '#101012', borderColor: '#242427', borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', padding: 2 },
@@ -162,8 +162,8 @@ const styles = StyleSheet.create({
   fallbackInitial: { color: '#A3B9DC', fontSize: 20, fontWeight: '500' },
   projectCopy: { flex: 1, marginLeft: 13, minWidth: 0 },
   projectHeading: { alignItems: 'center', flexDirection: 'row', minWidth: 0 },
-  projectName: { color: '#F2F2F4', flexShrink: 1, fontSize: 16, fontWeight: '600', letterSpacing: -0.2 },
-  projectDescription: { color: '#89898F', fontSize: 13, lineHeight: 18, marginTop: 3 },
+  projectName: { color: '#25364A', flexShrink: 1, fontSize: 16, fontWeight: '600', letterSpacing: -0.2 },
+  projectDescription: { color: '#43566C', fontSize: 13, lineHeight: 18, marginTop: 3 },
   recency: { color: '#5F6268', fontSize: 11, marginTop: 6 },
   chevron: { color: '#4E4E54', fontSize: 24, marginLeft: 9 },
   archiveMarker: { color: '#73737A', fontSize: 10, marginLeft: 8 },
@@ -172,8 +172,8 @@ const styles = StyleSheet.create({
   archiveButtonText: { color: '#85858B', fontSize: 12, fontWeight: '600' },
   archiveChevron: { color: '#66666C', fontSize: 17 },
   center: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: 32 },
-  error: { color: '#E39A8E', fontSize: 14, textAlign: 'center' },
-  emptyTitle: { color: '#F2F2F4', fontSize: 19, fontWeight: '600' },
-  emptyBody: { color: '#85858B', fontSize: 14, lineHeight: 20, marginTop: 8, maxWidth: 300, textAlign: 'center' },
+  error: { color: '#A43D32', fontSize: 14, textAlign: 'center' },
+  emptyTitle: { color: '#25364A', fontSize: 19, fontWeight: '600' },
+  emptyBody: { color: '#43566C', fontSize: 14, lineHeight: 20, marginTop: 8, maxWidth: 300, textAlign: 'center' },
   pressed: { opacity: 0.58 },
 });

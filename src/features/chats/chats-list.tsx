@@ -68,8 +68,8 @@ const styles = StyleSheet.create({
   },
   compactRow: { paddingVertical: 14 },
   pressed: { opacity: 0.58 },
-  title: { color: '#F4F4F5', fontSize: 16, fontWeight: '500', lineHeight: 22 },
-  compactTitle: { fontSize: 15, lineHeight: 20 },
+  title: { color: '#25364A', fontSize: 16, fontWeight: '500', lineHeight: 22 },
+  compactTitle: { color: '#F2F2F4', fontSize: 15, lineHeight: 20 },
   metadata: { color: '#85858A', fontSize: 12, marginTop: 6 },
   compactMetadata: { fontSize: 11, marginTop: 4 },
 });

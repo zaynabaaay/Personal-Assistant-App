@@ -138,6 +138,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   keyboardView: { flex: 1, justifyContent: 'center' },
-  safeArea: { backgroundColor: '#F5F4F0', flex: 1 },
+  safeArea: { backgroundColor: '#EAF4FF', flex: 1 },
   title: { color: '#343330', fontSize: 32, marginTop: 8 },
 });

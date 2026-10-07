@@ -83,7 +83,7 @@ export default function CompletedConversationScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <View style={styles.header}>
         <Pressable
           accessibilityLabel="Back to Chats"
@@ -126,7 +126,7 @@ export default function CompletedConversationScreen() {
                 style={message.role === 'user' ? styles.userMessage : styles.assistantMessage}
               >
                 <Text style={styles.role}>{message.role === 'user' ? 'You' : 'Tina'}</Text>
-                <Text style={styles.messageText}>{message.content}</Text>
+                <Text style={[styles.messageText, message.role !== 'user' && styles.assistantMessageText]}>{message.content}</Text>
                 <Text style={styles.messageTime}>
                   {DATE_TIME_FORMATTER.format(new Date(message.occurredAt))}
                 </Text>
@@ -152,7 +152,7 @@ export default function CompletedConversationScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: '#050505', flex: 1 },
+  safeArea: { backgroundColor: '#EAF4FF', flex: 1 },
   header: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -160,15 +160,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 18,
   },
-  back: { color: '#A1A1A6', fontSize: 14 },
-  headerTitle: { color: '#F7F7F8', fontSize: 17, fontWeight: '600' },
+  back: { color: '#43566C', fontSize: 14 },
+  headerTitle: { color: '#25364A', fontSize: 17, fontWeight: '600' },
   headerSpacer: { width: 32 },
   centered: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: 32 },
-  error: { color: '#E39A8E', fontSize: 14, textAlign: 'center' },
+  error: { color: '#A43D32', fontSize: 14, textAlign: 'center' },
   content: { paddingBottom: 48, paddingHorizontal: 30, paddingTop: 18 },
-  title: { color: '#F7F7F8', fontSize: 24, fontWeight: '600', lineHeight: 31 },
+  title: { color: '#25364A', fontSize: 24, fontWeight: '600', lineHeight: 31 },
   date: { color: '#85858A', fontSize: 12, marginTop: 7 },
-  summary: { color: '#B3B3B7', fontSize: 15, lineHeight: 22, marginTop: 16 },
+  summary: { color: '#43566C', fontSize: 15, lineHeight: 22, marginTop: 16 },
   transcript: { marginTop: 34 },
   userMessage: {
     alignSelf: 'flex-end',
@@ -181,10 +181,11 @@ const styles = StyleSheet.create({
   },
   assistantMessage: { alignSelf: 'flex-start', marginTop: 24, maxWidth: '92%' },
   role: { color: '#85858A', fontSize: 11, fontWeight: '600', marginBottom: 4 },
+  assistantMessageText: { color: '#25364A' },
   messageText: { color: '#F0F0F2', fontSize: 16, lineHeight: 24 },
   messageTime: { color: '#747479', fontSize: 10, marginTop: 6 },
   deleteButton: { alignSelf: 'center', marginTop: 46, padding: 12 },
-  deleteText: { color: '#E58878', fontSize: 14 },
-  deleteError: { color: '#E39A8E', fontSize: 13, textAlign: 'center' },
+  deleteText: { color: '#A43D32', fontSize: 14 },
+  deleteError: { color: '#A43D32', fontSize: 13, textAlign: 'center' },
   pressed: { opacity: 0.55 },
 });

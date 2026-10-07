@@ -43,7 +43,7 @@ export default function ChatsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <View style={styles.header}>
         <Pressable
           accessibilityLabel="Back to Home"
@@ -84,7 +84,7 @@ export default function ChatsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: '#050505', flex: 1 },
+  safeArea: { backgroundColor: '#EAF4FF', flex: 1 },
   header: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -92,11 +92,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 18,
   },
-  back: { color: '#A1A1A6', fontSize: 14 },
-  heading: { color: '#F7F7F8', fontSize: 19, fontWeight: '600' },
+  back: { color: '#43566C', fontSize: 14 },
+  heading: { color: '#25364A', fontSize: 19, fontWeight: '600' },
   headerSpacer: { width: 32 },
   centered: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: 32 },
-  error: { color: '#E39A8E', fontSize: 14, textAlign: 'center' },
-  emptyTitle: { color: '#F0F0F2', fontSize: 17, fontWeight: '500' },
-  emptyBody: { color: '#85858A', fontSize: 14, marginTop: 8 },
+  error: { color: '#A43D32', fontSize: 14, textAlign: 'center' },
+  emptyTitle: { color: '#25364A', fontSize: 17, fontWeight: '500' },
+  emptyBody: { color: '#43566C', fontSize: 14, marginTop: 8 },
 });
