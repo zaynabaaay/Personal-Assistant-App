@@ -168,7 +168,7 @@ test('evaluation: saying we talked before causes retrieval before repetition is 
 test('evaluation: retrieved context is synthesized without exposing storage mechanics', () => {
   assert.match(instructions, /Keep tool use invisible/);
   assert.match(instructions, /If exactly one listed Project is a clear plausible match.*answer using it/);
-  assert.match(instructions, /without asking the user to understand Tina’s storage structure/);
+  assert.match(instructions, /without asking the user to understand Auri’s storage structure/);
 });
 
 test('evaluation: a standalone factual question remains on the direct answer path', () => {

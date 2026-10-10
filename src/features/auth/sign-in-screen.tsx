@@ -48,7 +48,7 @@ export default function SignInScreen() {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView behavior={KEYBOARD_BEHAVIOR} style={styles.keyboardView}>
         <View style={styles.content}>
-          <Text style={styles.eyebrow}>Personal Assistant</Text>
+          <Text style={styles.eyebrow}>Auri</Text>
           <Text style={styles.title}>Sign in</Text>
           <Text style={styles.description}>
             Use the private owner account configured for this assistant.

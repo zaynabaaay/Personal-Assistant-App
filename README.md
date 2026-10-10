@@ -1,6 +1,6 @@
-# Personal Assistant App
+# Auri
 
-A quiet, mobile-first personal assistant interface built with Expo, React Native, TypeScript, and Expo Router.
+Auri is a quiet, mobile-first AI companion built with Expo, React Native, TypeScript, and Expo Router.
 
 ## Run locally
 

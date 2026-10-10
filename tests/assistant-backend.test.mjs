@@ -245,7 +245,7 @@ test('calendar tool results are supplied to OpenAI without persistence', async (
                   endTime: '2026-08-11T22:00:00.000Z',
                   isAllDay: false,
                   startTime: '2026-08-11T21:00:00.000Z',
-                  title: 'Test Personal Assistant',
+                  title: 'Test Auri',
                 },
               ],
               status: 'success',
@@ -369,7 +369,7 @@ test('the app client queries calendar only after the backend requests a tool', a
               endTime: '2026-08-11T22:00:00.000Z',
               isAllDay: false,
               startTime: '2026-08-11T21:00:00.000Z',
-              title: 'Test Personal Assistant',
+              title: 'Test Auri',
             },
           ],
           status: 'success',
@@ -548,7 +548,7 @@ test('calendar events are sanitized before leaving the device', async () => {
     notes: 'private notes',
     startDate: '2026-08-11T21:00:00.000Z',
     timeZone: 'America/Toronto',
-    title: 'Test Personal Assistant',
+    title: 'Test Auri',
   };
   const service = {
     findNextUpcomingEvent: async () => ({ data: event, status: 'success' }),
