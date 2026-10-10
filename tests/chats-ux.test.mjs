@@ -59,6 +59,14 @@ test('readable title generation is short, content-based, and has a safe fallback
   }), 'Linen Lampshades');
 });
 
+test('Auri greetings stay out of titles while legacy Tina greetings remain supported', () => {
+  for (const greeting of ['Hi Auri', 'Hello Auri!', 'Hey Auri.', 'Hi Tina', 'Hello Tina!', 'Hey Tina.']) {
+    assert.deepEqual(selectTitleUserMessages(transcript([greeting, 'I like linen lampshades.'])),
+      ['I like linen lampshades.']);
+    assert.equal(generateReadableConversationTitle(transcript([greeting])), 'Saved Chat');
+  }
+});
+
 test('question framing becomes short subject-oriented archive labels', () => {
   assert.equal(generateReadableConversationTitle(transcript([
     'What colour sofa do I want?',

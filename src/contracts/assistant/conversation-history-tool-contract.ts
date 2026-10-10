@@ -133,7 +133,7 @@ export const ASSISTANT_CONVERSATION_HISTORY_TOOL_CONTRACTS: readonly AssistantTo
   isResult,
   name: 'search_completed_conversations',
   openAI: {
-    description: 'Search the authenticated user’s completed conversations, then automatically retrieve bounded answer-bearing evidence from across the best matching conversations. Use when the user asks what they or Tina previously said, suggested, discussed, decided, named, planned, had, or came up with, including paraphrases and statements such as “we talked about this before.” For a direct personal-recall question, call this automatically after general memory returns no useful result; do not wait for another user cue. Set preferredRole to user for what the user said or had, assistant for what Tina suggested or gave, and both for a joint discussion. Use recent recency bias only when the wording implies likely current or temporary state. Do not use this fallback for ordinary factual or non-personal questions, current present-context questions, current authoritative Project state, or casual sharing. Results are read-only historical evidence, not current Project truth. Answer only from returned evidence; never invent missing details.',
+    description: 'Search the authenticated user’s completed conversations, then automatically retrieve bounded answer-bearing evidence from across the best matching conversations. Use when the user asks what they or Auri previously said, suggested, discussed, decided, named, planned, had, or came up with, including paraphrases and statements such as “we talked about this before.” For a direct personal-recall question, call this automatically after general memory returns no useful result; do not wait for another user cue. Set preferredRole to user for what the user said or had, assistant for what Auri suggested or gave, and both for a joint discussion. Use recent recency bias only when the wording implies likely current or temporary state. Do not use this fallback for ordinary factual or non-personal questions, current present-context questions, current authoritative Project state, or casual sharing. Results are read-only historical evidence, not current Project truth. Answer only from returned evidence; never invent missing details.',
     parameters: {
       type: 'object',
       properties: {
@@ -146,7 +146,7 @@ export const ASSISTANT_CONVERSATION_HISTORY_TOOL_CONTRACTS: readonly AssistantTo
         preferredRole: {
           type: 'string',
           enum: ['user', 'assistant', 'both'],
-          description: 'Whose prior words are the requested evidence: the user, Tina, or both participants.',
+          description: 'Whose prior words are the requested evidence: the user, Auri, or both participants.',
         },
         recencyBias: {
           type: 'string',

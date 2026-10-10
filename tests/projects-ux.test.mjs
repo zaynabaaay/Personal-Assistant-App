@@ -246,7 +246,7 @@ test('opening a Project enters an identity-first workspace with Overview', async
   assert.doesNotMatch(screen, /open-project-workspace|pathname: '\/projects\/\[id\]\/workspace'/);
 });
 
-test('Project-scoped Tina expands inside the workspace and reuses composer behavior', async () => {
+test('Project-scoped Auri expands inside the workspace and reuses composer behavior', async () => {
   const screen = await read('../src/features/projects/project-screen.tsx');
   assert.match(screen, /testID="project-tina-control"/);
   assert.match(screen, /testID="open-project-tina"/);
@@ -265,7 +265,7 @@ test('Project-scoped Tina expands inside the workspace and reuses composer behav
   assert.doesNotMatch(screen, /Right now|current state|current context/i);
 });
 
-test('Project Ask Tina exposes a non-destructive scoped New Chat without touching main or other drafts', async () => {
+test('Project Ask Auri exposes a non-destructive scoped New Chat without touching main or other drafts', async () => {
   const [projectScreen, homeScreen] = await Promise.all([
     read('../src/features/projects/project-screen.tsx'),
     read('../src/features/home/home-screen.tsx'),

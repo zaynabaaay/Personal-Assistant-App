@@ -34,7 +34,7 @@ export default function CompletedConversationScreen() {
     if (!record || deleting) return;
     Alert.alert(
       'Delete this chat?',
-      'The transcript will be permanently removed. Tina’s structured memory will be kept.',
+      'The transcript will be permanently removed. Auri’s structured memory will be kept.',
       [
         { style: 'cancel', text: 'Cancel' },
         {
@@ -125,7 +125,7 @@ export default function CompletedConversationScreen() {
                 key={message.id}
                 style={message.role === 'user' ? styles.userMessage : styles.assistantMessage}
               >
-                <Text style={styles.role}>{message.role === 'user' ? 'You' : 'Tina'}</Text>
+                <Text style={styles.role}>{message.role === 'user' ? 'You' : 'Auri'}</Text>
                 <Text style={styles.messageText}>{message.content}</Text>
                 <Text style={styles.messageTime}>
                   {DATE_TIME_FORMATTER.format(new Date(message.occurredAt))}

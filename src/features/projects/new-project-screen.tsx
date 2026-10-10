@@ -89,7 +89,7 @@ export default function NewProjectScreen() {
             testID="project-description-input"
             value={description}
           />
-          <Text style={styles.hint}>That’s enough to begin. You can shape the rest with Tina inside the Project.</Text>
+          <Text style={styles.hint}>That’s enough to begin. You can shape the rest with Auri inside the Project.</Text>
           {error ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}
         </View>
       </KeyboardAvoidingView>

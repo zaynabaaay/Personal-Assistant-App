@@ -8,7 +8,7 @@ test('Home is a minimal dark conversation shell without the dashboard clock', as
   const home = await read('../src/features/home/home-screen.tsx');
   assert.match(home, /backgroundColor: '#050505'/);
   assert.match(home, /<StatusBar style="light"/);
-  assert.match(home, /<Text style=\{styles\.headerTitle\}>Tina<\/Text>/);
+  assert.match(home, /<Text style=\{styles\.headerTitle\}>Auri<\/Text>/);
   assert.doesNotMatch(home, /TIME_FORMATTER|DATE_FORMATTER|useCurrentDate|styles\.time|styles\.date/);
 });
 
@@ -78,14 +78,14 @@ test('send states are visual, disabled while unavailable, and guarded during req
   assert.match(home, /if \(!text \|\| isResponding \|\| isSavingMessage/);
 });
 
-test('Tina uses a reduced-motion-aware inline thinking indicator without status copy', async () => {
+test('Auri uses a reduced-motion-aware inline thinking indicator without status copy', async () => {
   const [home, reducedMotion] = await Promise.all([
     read('../src/features/home/home-screen.tsx'),
     read('../src/features/accessibility/use-reduced-motion.ts'),
   ]);
   assert.doesNotMatch(home, /Responding…/);
   assert.match(home, /testID="thinking-indicator"/);
-  assert.match(home, /accessibilityLabel="Tina is thinking"/);
+  assert.match(home, /accessibilityLabel="Auri is thinking"/);
   assert.match(home, /Animated\.loop/);
   assert.match(reducedMotion, /isReduceMotionEnabled/);
 });

@@ -87,7 +87,7 @@ test('Overview files leave the page but retain upload and original access throug
   assert.match(assets, /openProjectAssetOriginal/);
 });
 
-test('narrow iPhone layout keeps navigation scrollable and Ask Tina compact', async () => {
+test('narrow iPhone layout keeps navigation scrollable and Ask Auri compact', async () => {
   const screen = await read('../src/features/projects/project-screen.tsx');
 
   assert.match(screen, /tinaPanel: \{[^}]*right: 12/);
