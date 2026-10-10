@@ -30,7 +30,7 @@ test('send availability distinguishes empty, ready, and in-flight composer state
   assert.equal(messageSendEnabled('   ', idle), false);
   assert.equal(messageSendEnabled('Ready to send', idle), true);
   assert.equal(messageSendEnabled('No duplicate', { ...idle, isSavingMessage: true }), false);
-  assert.equal(messageSendEnabled('Wait for Tina', { ...idle, isResponding: true }), false);
+  assert.equal(messageSendEnabled('Wait for Auri', { ...idle, isResponding: true }), false);
 });
 
 test('the shared composer measures controlled text independently of native input events', async () => {

@@ -45,7 +45,7 @@ function ThinkingIndicator() {
     return () => animation.stop();
   }, [progress, reducedMotion]);
   return (
-    <View accessibilityLabel="Tina is thinking" style={styles.thinking} testID="project-thinking-indicator">
+    <View accessibilityLabel="Auri is thinking" style={styles.thinking} testID="project-thinking-indicator">
       {[0, 1, 2].map((index) => <Animated.View key={index} style={[styles.dot, { opacity: reducedMotion ? 0.55 : progress.interpolate({ inputRange: [0, 0.08 + index * 0.18, 0.38 + index * 0.18, 1], outputRange: [0.25, 0.25, 0.9, 0.25] }) }]} />)}
     </View>
   );
@@ -236,7 +236,7 @@ export default function ProjectScreen() {
       try {
         const assistantEntry = await projectChatService.append(session, 'assistant_message', result.message.content, entries.length + 1);
         setEntries((current) => [...current, assistantEntry]);
-      } catch { setError('Tina replied, but the reply could not be saved.'); }
+      } catch { setError('Auri replied, but the reply could not be saved.'); }
     } else if (result.status === 'error') setError(result.error.message);
     setResponding(false);
   };
@@ -335,12 +335,12 @@ export default function ProjectScreen() {
           <View style={[styles.tinaPanel, tinaOpen ? styles.tinaPanelOpen : styles.tinaPanelClosed]} testID="project-tina-control">
             {tinaOpen ? <>
               <View style={styles.tinaHeader}>
-                <View><Text style={styles.tinaTitle}>Tina</Text><Text style={styles.tinaScope}>Working in {project?.name ?? 'this Project'}</Text></View>
+                <View><Text style={styles.tinaTitle}>Auri</Text><Text style={styles.tinaScope}>Working in {project?.name ?? 'this Project'}</Text></View>
                 <View style={styles.tinaHeaderActions}>
                   <Pressable accessibilityLabel="Start a new Project chat" accessibilityRole="button" disabled={!canStartNewChat} onPress={startNewChat} style={({ pressed }) => [styles.projectNewChatButton, pressed && canStartNewChat && styles.pressed]} testID="project-new-chat-button">
                     <Text style={[styles.projectNewChatText, !canStartNewChat && styles.projectNewChatTextDisabled]}>{startingNewChat ? 'Starting…' : 'New Chat'}</Text>
                   </Pressable>
-                  <Pressable accessibilityLabel="Minimize Tina" onPress={() => { Keyboard.dismiss(); setTinaOpen(false); }} style={styles.minimizeButton}><Text style={styles.minimizeText}>⌄</Text></Pressable>
+                  <Pressable accessibilityLabel="Minimize Auri" onPress={() => { Keyboard.dismiss(); setTinaOpen(false); }} style={styles.minimizeButton}><Text style={styles.minimizeText}>⌄</Text></Pressable>
                 </View>
               </View>
               <Transcript entries={entries} responding={responding} />
@@ -348,7 +348,7 @@ export default function ProjectScreen() {
             </> : (
               <Pressable accessibilityRole="button" onPress={() => setTinaOpen(true)} style={({ pressed }) => [styles.askTina, pressed && styles.pressed]} testID="open-project-tina">
                 <View style={styles.tinaMark}><Text style={styles.tinaMarkText}>✦</Text></View>
-                <View style={styles.askCopy}><Text style={styles.askTitle}>Ask Tina</Text></View>
+                <View style={styles.askCopy}><Text style={styles.askTitle}>Ask Auri</Text></View>
               </Pressable>
             )}
           </View>

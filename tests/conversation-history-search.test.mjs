@@ -216,7 +216,7 @@ test('requested source role and time sensitivity are explicit bounded retrieval 
   }), false);
 });
 
-test('assistant-authored workout evidence is requested for what Tina previously gave', async () => {
+test('assistant-authored workout evidence is requested for what Auri previously gave', async () => {
   const queries = [];
   const execute = createAssistantConversationHistoryToolExecutor(
     () => repositoryFor([row()], queries),
@@ -313,7 +313,7 @@ test('questions about what was discussed prefer completed-conversation evidence'
   assert.match(instructions, /When the user asks what was discussed, suggested, said, named, or considered before, prefer relevant completed-conversation evidence/);
   const contract = ASSISTANT_TOOL_CONTRACTS.find(({ name }) =>
     name === 'search_completed_conversations');
-  assert.match(contract.openAI.description, /what they or Tina previously said, suggested, discussed/);
+  assert.match(contract.openAI.description, /what they or Auri previously said, suggested, discussed/);
 });
 
 test('current interpretations must be framed as inference rather than saved fact', () => {

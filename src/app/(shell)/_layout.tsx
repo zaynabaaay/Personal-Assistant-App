@@ -40,10 +40,10 @@ export default function ShellLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          tabBarAccessibilityLabel: 'Tina conversation',
+          tabBarAccessibilityLabel: 'Auri conversation',
           tabBarIcon: ({ focused }) => <TinaIcon focused={focused} />,
-          tabBarLabel: ({ color }) => <Text style={[styles.label, { color }]}>Tina</Text>,
-          title: 'Tina',
+          tabBarLabel: ({ color }) => <Text style={[styles.label, { color }]}>Auri</Text>,
+          title: 'Auri',
         }}
       />
       <Tabs.Screen

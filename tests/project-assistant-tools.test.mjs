@@ -235,7 +235,7 @@ async function verifyToken(token) {
   return { id: USER_ID };
 }
 
-test('server tool loop can list then retrieve a Project before Tina answers', async () => {
+test('server tool loop can list then retrieve a Project before Auri answers', async () => {
   const requests = [];
   const contexts = [];
   const responses = [
@@ -338,7 +338,7 @@ test('suggestive uploaded filename remains metadata, not evidence of document co
   assert.equal(requests[1].input.at(-1).type, 'function_call_output');
 });
 
-test('multi-placed asset enters Tina context once with bounded truthful membership', async () => {
+test('multi-placed asset enters Auri context once with bounded truthful membership', async () => {
   const projectSeed = seed();
   projectSeed.sections.push({ createdAt: CREATED_AT, id: 'references', isDefault: false,
     position: 2, projectId: PROJECT_ID, status: 'active', title: 'References',
@@ -366,7 +366,7 @@ test('multi-placed asset enters Tina context once with bounded truthful membersh
   assert.equal('content' in assets[0], false);
 });
 
-test('Tina asset placements use deterministic ordering and an explicit ten-section bound', async () => {
+test('Auri asset placements use deterministic ordering and an explicit ten-section bound', async () => {
   const projectSeed = seed();
   const placementSections = Array.from({ length: 12 }, (_, index) => ({
     createdAt: CREATED_AT,
@@ -395,7 +395,7 @@ test('Tina asset placements use deterministic ordering and an explicit ten-secti
   assert.equal(asset.placementsTruncated, true);
 });
 
-test('Tina retains no archived-section relationship in active placement context', async () => {
+test('Auri retains no archived-section relationship in active placement context', async () => {
   const projectSeed = seed();
   projectSeed.sections[0] = { ...projectSeed.sections[0], status: 'archived' };
   const execute = executorFor({ [USER_ID]: projectSeed });
@@ -410,7 +410,7 @@ test('Tina retains no archived-section relationship in active placement context'
   assert.equal('sectionStatus' in asset, false);
 });
 
-test('Tina placement truncation is computed after archived sections are filtered', async () => {
+test('Auri placement truncation is computed after archived sections are filtered', async () => {
   const projectSeed = seed();
   const activeSections = Array.from({ length: 9 }, (_, index) => ({
     createdAt: CREATED_AT, id: `active-${index}`, isDefault: false, position: index + 2,

@@ -177,7 +177,7 @@ export const ASSISTANT_PROJECT_WRITE_TOOL_CONTRACTS = [
     targetDate: nullableStringSchema('ISO date or null.', 10), timezone: { type: 'string', minLength: 1, maxLength: 100 },
     type: { type: 'string', enum: projectTypes },
   }, ['description', 'goal', 'name', 'priority', 'startDate', 'status', 'targetDate', 'timezone', 'type']),
-  contract('update_project', 'Update explicit basic fields on one unambiguously resolved Project. Read Projects first when the ID is unknown. Use null for every field not requested. If the Project is ambiguous, pass null projectId so Tina can clarify instead of guessing.', {
+  contract('update_project', 'Update explicit basic fields on one unambiguously resolved Project. Read Projects first when the ID is unknown. Use null for every field not requested. If the Project is ambiguous, pass null projectId so Auri can clarify instead of guessing.', {
     description: nullableStringSchema('New description, or null.'), goal: nullableStringSchema('New goal, or null.'),
     name: nullableStringSchema('New Project name, or null.', 300), priority: { type: ['string', 'null'], enum: [...priorities, null] },
     projectId: nullableStringSchema('Exact resolved Project ID, or null when ambiguous.', 200), startDate: nullableStringSchema('New ISO date, or null.', 10),
@@ -192,7 +192,7 @@ export const ASSISTANT_PROJECT_WRITE_TOOL_CONTRACTS = [
     priority: { type: ['string', 'null'], enum: [...priorities, null] }, projectId: nullableStringSchema('Exact resolved Project ID, or null when ambiguous.', 200),
     status: { type: ['string', 'null'], enum: ['todo', 'in_progress', 'blocked', 'cancelled', 'planned', 'active', 'completed', 'review', null], description: 'Explicit status valid for the selected item, or null.' }, targetDate: nullableStringSchema('Milestone ISO target date or null.', 10),
   }, WORK_FIELDS),
-  contract('record_project_truth', 'Required whenever the user explicitly asks to save, record, add, or persist accepted knowledge, an unresolved question, or a confirmed decision. Also replaces current knowledge/decision while preserving its superseded record. Tina must never claim Project truth was saved unless this tool returns success in the current request. Read current knowledge first for duplicates and replacement IDs. Do not call for maybe, perhaps, what-if, brainstorming, or other uncertainty. Replacements require confirmed_replacement only after the user directly confirms saving the new truth.', {
+  contract('record_project_truth', 'Required whenever the user explicitly asks to save, record, add, or persist accepted knowledge, an unresolved question, or a confirmed decision. Also replaces current knowledge/decision while preserving its superseded record. Auri must never claim Project truth was saved unless this tool returns success in the current request. Read current knowledge first for duplicates and replacement IDs. Do not call for maybe, perhaps, what-if, brainstorming, or other uncertainty. Replacements require confirmed_replacement only after the user directly confirms saving the new truth.', {
     confirmation: { type: 'string', enum: ['explicit', 'confirmed_replacement'] }, content: nullableStringSchema('Knowledge/question content or null.'),
     entityId: nullableStringSchema('Exact current knowledge/decision ID for replacement, otherwise null.', 200),
     kind: { type: ['string', 'null'], enum: ['fact', 'requirement', 'constraint', 'note', null] },

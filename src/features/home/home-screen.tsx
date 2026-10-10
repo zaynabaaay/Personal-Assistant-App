@@ -74,7 +74,7 @@ function HomeHeader({
         </View>
       </Pressable>
 
-      <Text style={styles.headerTitle}>Tina</Text>
+      <Text style={styles.headerTitle}>Auri</Text>
 
       <Pressable
         accessibilityLabel="Start a new chat"
@@ -148,7 +148,7 @@ function ThinkingIndicator() {
 
   return (
     <View
-      accessibilityLabel="Tina is thinking"
+      accessibilityLabel="Auri is thinking"
       accessibilityLiveRegion="polite"
       style={styles.thinkingIndicator}
       testID="thinking-indicator"
@@ -311,7 +311,7 @@ export default function HomeScreen() {
       setPendingPersistenceKind(null);
     } catch {
       setPersistenceError(
-        'Tina replied, but saving was interrupted. The reply is preserved; retry saving.',
+        'Auri replied, but saving was interrupted. The reply is preserved; retry saving.',
       );
     }
   };

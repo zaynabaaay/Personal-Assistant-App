@@ -169,7 +169,7 @@ test('section operations leave existing Project intelligence and provenance unto
   assert.deepEqual(await repository.listWorkSessions('aqal'), [session]);
 });
 
-test('Project UI uses persisted ordered sections without changing Tina or work-session scope', async () => {
+test('Project UI uses persisted ordered sections without changing Auri or work-session scope', async () => {
   const [screen, navigation, manager, routing, chat] = await Promise.all([
     read('../src/features/projects/project-screen.tsx'),
     read('../src/features/projects/project-section-navigation.tsx'),

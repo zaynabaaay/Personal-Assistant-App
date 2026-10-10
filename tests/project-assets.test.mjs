@@ -731,7 +731,7 @@ test('failed binary upload never creates a false persisted asset row', async () 
   assert.deepEqual(await repository.listResources('aqal'), []);
 });
 
-test('asset UI stays section-scoped and preserves Project Tina and New Chat behavior', async () => {
+test('asset UI stays section-scoped and preserves Project Auri and New Chat behavior', async () => {
   const [screen, surface, picker, client, routing, chat] = await Promise.all([
     readFile(new URL('../src/features/projects/project-screen.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/features/projects/project-section-assets.tsx', import.meta.url), 'utf8'),
